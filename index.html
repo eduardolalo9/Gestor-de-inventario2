@@ -18,7 +18,6 @@
             --ink:         #0b0c10;
             --surface:     #13141a;
             --card:        #1a1b23;
-            --card-hover:  #1f2030;
             --border:      rgba(255,255,255,0.07);
             --border-mid:  rgba(255,255,255,0.12);
 
@@ -41,7 +40,6 @@
 
             --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
             --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
-            --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
         }
 
         /* ================================================
@@ -86,8 +84,6 @@
             100% { opacity: 1; transform: translateY(0) scale(1); }
         }
         @keyframes backdropReveal {
-            /* CORRECCIÓN BUG 1: backdrop-filter no es animable en @keyframes (spec violation).
-               Se mantiene como propiedad estática en el selector del modal. */
             from { opacity: 0; }
             to   { opacity: 1; }
         }
@@ -112,8 +108,6 @@
             from { opacity: 0; transform: translateX(-8px); }
             to   { opacity: 1; transform: translateX(0); }
         }
-        /* CORRECCIÓN BUG 2: tres animaciones sin uso (postSlide, borderPulse, shimmer)
-           estaban declaradas pero nunca referenciadas. Eliminadas. */
 
         /* ================================================
            ANIMATION UTILITY CLASSES
@@ -134,65 +128,181 @@
         .hidden { display: none !important; }
 
         /* ================================================
-           HEADER — dark glass bar
+           HEADER — compact dark bar
            ================================================ */
         body > .sticky.top-0 {
             background: linear-gradient(135deg, #1e1740 0%, #12173d 40%, #1a1020 100%) !important;
             border-bottom: 1px solid var(--border-mid) !important;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.50), 0 1px 0 rgba(108,99,255,0.25) !important;
+            box-shadow: 0 4px 44px rgba(0,0,0,.50), 0 1px 0 rgba(108,99,255,.25) !important;
         }
         body > .sticky.top-0 h1 {
             font-family: 'Syne', sans-serif !important;
-            font-weight: 800 !important;
-            letter-spacing: -0.03em !important;
-            background: linear-gradient(120deg, #ffffff 30%, rgba(108,99,255,0.85) 100%);
+            font-weight: 700 !important;
+            font-size: .80rem !important;
+            line-height: 1.1 !important;
+            letter-spacing: -0.02em !important;
+            background: linear-gradient(120deg, #fff 40%, rgba(108,99,255,.9) 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            /* CORRECCIÓN BUG 7: Firefox no soporta -webkit-text-fill-color.
-               color:transparent garantiza el efecto gradient en todos los navegadores. */
             color: transparent !important;
         }
-        body > .sticky.top-0 p {
-            color: var(--txt-secondary) !important;
-            font-family: 'Outfit', sans-serif !important;
-            font-size: 0.75rem !important;
+
+        /* ── Botón hamburguesa ── */
+        #hamburgerBtn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px; height: 36px;
+            border-radius: 10px;
+            background: rgba(255,255,255,.10);
+            border: 1px solid rgba(255,255,255,.18);
+            cursor: pointer;
+            transition: background .18s ease, transform .14s var(--ease-spring);
+            flex-shrink: 0;
+            color: #fff;
         }
+        #hamburgerBtn:hover  { background: rgba(108,99,255,.35); transform: scale(1.06); }
+        #hamburgerBtn:active { transform: scale(.94); }
+
+        /* Tab bar original — oculto visualmente, intacto en el DOM
+           para que switchTab() siga leyendo .tab-btn[data-tab] */
+        .bg-white.shadow-sm.sticky { display: none !important; }
 
         /* ================================================
-           TAB BAR — dark surface, pill active state
+           SIDEBAR OVERLAY
            ================================================ */
-        .bg-white.shadow-sm.sticky {
-            background: var(--surface) !important;
-            border-bottom: 1px solid var(--border) !important;
-            box-shadow: none !important;
+        #sbOverlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,.52);
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            z-index: 300;
+            opacity: 0; pointer-events: none;
+            transition: opacity .28s ease;
         }
-        .tab-btn {
-            font-family: 'Outfit', sans-serif !important;
-            font-weight: 500 !important;
-            font-size: 0.875rem !important;
-            color: var(--txt-secondary) !important;
-            letter-spacing: 0 !important;
-            padding: 14px 16px !important;
-            transition: color 0.18s ease !important;
+        #sbOverlay.sb-open { opacity: 1; pointer-events: all; }
+
+        /* ================================================
+           SIDEBAR DRAWER
+           ================================================ */
+        #sidebar {
+            position: fixed;
+            top: 0; left: 0; bottom: 0;
+            width: 272px;
+            display: flex; flex-direction: column;
+            background: linear-gradient(165deg,#1c1d2e 0%,#13141a 55%,#0f1018 100%);
+            border-right: 1px solid var(--border-mid);
+            box-shadow: 10px 0 40px rgba(0,0,0,.55);
+            z-index: 310;
+            transform: translateX(-100%);
+            transition: transform .34s var(--ease-spring);
+            overflow: hidden;
         }
-        .tab-btn.text-gray-900,
-        .tab-btn:has(.tab-indicator) {
-            color: var(--txt-primary) !important;
+        #sidebar.sb-open { transform: translateX(0); }
+
+        /* Cabecera del drawer */
+        #sbHead {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 18px 18px 14px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(135deg,rgba(108,99,255,.14) 0%,transparent 100%);
+            flex-shrink: 0;
         }
-        .tab-btn:hover { color: var(--txt-primary) !important; }
-        .tab-indicator {
-            animation: slideIn 0.26s var(--ease-spring) both !important;
-            transform-origin: left !important;
-            background: linear-gradient(90deg, var(--accent), var(--accent-2)) !important;
-            height: 2px !important;
-            border-radius: 0 !important;
+        #sbHead .sb-logo {
+            font-family: 'Syne', sans-serif;
+            font-weight: 800; font-size: .95rem;
+            letter-spacing: -.02em;
+            background: linear-gradient(120deg,#fff 30%,rgba(108,99,255,.9) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        #sbCloseBtn {
+            width: 30px; height: 30px;
+            border-radius: 8px;
+            background: rgba(255,255,255,.07);
+            border: 1px solid rgba(255,255,255,.12);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; color: var(--txt-secondary);
+            transition: background .15s ease, color .15s ease;
+        }
+        #sbCloseBtn:hover { background: rgba(255,107,107,.22); color: #ff6b6b; }
+
+        /* Nav items */
+        #sbNav {
+            flex: 1; overflow-y: auto;
+            padding: 10px 8px;
+            display: flex; flex-direction: column; gap: 2px;
+        }
+        .sb-item {
+            display: flex; align-items: center; gap: 13px;
+            padding: 11px 14px;
+            border-radius: 12px;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 500; font-size: .88rem;
+            color: var(--txt-secondary);
+            background: transparent; border: 1px solid transparent;
+            cursor: pointer; text-align: left; width: 100%;
+            transition: background .16s ease, color .16s ease,
+                        border-color .16s ease, transform .14s var(--ease-spring);
+            position: relative; overflow: hidden;
+        }
+        .sb-item:hover {
+            background: rgba(255,255,255,.055);
+            color: var(--txt-primary);
+            transform: translateX(3px);
+        }
+        .sb-item.sb-active {
+            background: linear-gradient(135deg,rgba(108,99,255,.22) 0%,rgba(76,201,240,.09) 100%);
+            color: var(--txt-primary);
+            border-color: rgba(108,99,255,.28);
+        }
+        .sb-item.sb-active .sb-ico { color: var(--accent); }
+        /* Barra lateral izquierda del ítem activo */
+        .sb-item.sb-active::before {
+            content: '';
+            position: absolute; left: 0; top: 20%; bottom: 20%;
+            width: 3px; border-radius: 0 3px 3px 0;
+            background: linear-gradient(180deg, var(--accent), var(--accent-2));
+        }
+        .sb-ico {
+            width: 19px; height: 19px; flex-shrink: 0;
+            color: var(--txt-muted);
+            transition: color .16s ease;
+        }
+
+        /* Separador de sección */
+        .sb-sep {
+            font-family: 'Outfit', sans-serif;
+            font-size: .65rem; font-weight: 600;
+            letter-spacing: .08em; text-transform: uppercase;
+            color: var(--txt-muted);
+            padding: 10px 14px 4px;
+        }
+
+        /* Pie del drawer */
+        #sbFoot {
+            padding: 12px 18px;
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        #sbFoot p {
+            font-family: 'Outfit', sans-serif;
+            font-size: .68rem; color: var(--txt-muted);
+            text-align: center;
+        }
+
+        /* Ajuste del padding superior del contenido */
+        .max-w-7xl.mx-auto.px-3 {
+            padding-top: .5rem !important;
+            padding-bottom: .6rem !important;
         }
 
         /* ================================================
            BODY CONTENT AREA
            ================================================ */
-        .max-w-7xl.mx-auto.px-3 { padding-top: 1.5rem !important; padding-bottom: 3rem !important; }
+        .max-w-7xl.mx-auto.px-3 { padding-top: .5rem !important; padding-bottom: .6rem !important; }
 
         /* ================================================
            TAILWIND COLOUR OVERRIDES — force dark palette
@@ -271,8 +381,6 @@
             border-bottom: 1px solid var(--border) !important;
         }
         tbody tr:hover { background-color: rgba(108,99,255,0.06) !important; }
-        /* CORRECCIÓN BUG 3: el selector sin :hover aplicaba el fondo SIEMPRE.
-           Las filas de inventario sin datos mostraban tinte morado permanente. */
         .hover\:bg-purple-50:hover { background-color: rgba(108,99,255,0.10) !important; }
         .bg-purple-50              { background-color: rgba(108,99,255,0.10) !important; }
         .hover\:bg-purple-100:hover { background-color: rgba(108,99,255,0.15) !important; }
@@ -428,13 +536,10 @@
             background-color: var(--surface) !important;
         }
 
-        /* CORRECCIÓN BUG 4: .text-orange-500 duplicado eliminado — ya declarado arriba */
 
         /* ================================================
            AREA SELECTOR BUTTONS (Almacén / Barra)
            ================================================ */
-        /* CORRECCIÓN BUG 5: selector redundante con espacio literal en atributo class
-           eliminado — era impreciso. Se usa el selector doble de atributos separados. */
         button[class*="from-purple-500"][class*="to-blue-500"] {
             background: linear-gradient(135deg, var(--accent), var(--accent-blue)) !important;
         }
@@ -590,37 +695,100 @@
 <body class="min-h-screen transition-colors duration-300">
     <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden">
 
+    <!-- ══ Overlay ═══════════════════════════════════════════════ -->
+    <div id="sbOverlay" onclick="sbClose()"></div>
+
+    <!-- ══ Sidebar drawer ════════════════════════════════════════ -->
+    <div id="sidebar" role="navigation" aria-label="Menú principal">
+
+        <div id="sbHead">
+            <span class="sb-logo">Control de Inventario</span>
+            <button id="sbCloseBtn" onclick="sbClose()" aria-label="Cerrar menú">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+
+        <div id="sbNav">
+            <p class="sb-sep">Navegación</p>
+
+            <button class="sb-item sb-active" data-sb-tab="inicio"
+                    onclick="switchTab('inicio'); sbClose()">
+                <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+                </svg>
+                Inicio
+            </button>
+
+            <button class="sb-item" data-sb-tab="productos"
+                    onclick="switchTab('productos'); sbClose()">
+                <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+                </svg>
+                Productos
+            </button>
+
+            <button class="sb-item" data-sb-tab="pedidos"
+                    onclick="switchTab('pedidos'); sbClose()">
+                <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                Pedidos
+            </button>
+
+            <button class="sb-item" data-sb-tab="inventario"
+                    onclick="switchTab('inventario'); sbClose()">
+                <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+                </svg>
+                Inventario
+            </button>
+
+            <button class="sb-item" data-sb-tab="historia"
+                    onclick="switchTab('historia'); sbClose()">
+                <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Historia
+            </button>
+        </div>
+
+        <div id="sbFoot">
+            <p>Gestión profesional de barra</p>
+        </div>
+    </div>
+
+    <!-- ══ Header compacto ═══════════════════════════════════════ -->
     <div class="sticky top-0 z-50 bg-gradient-to-r from-purple-600 via-blue-600 to-orange-500 shadow-lg animate-fadeIn">
-        <div class="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-5">
-            <div class="flex justify-between items-center gap-2">
-                <div>
-                    <h1 class="text-lg sm:text-xl md:text-2xl font-bold text-white">Control de Inventario</h1>
-                    <p class="text-white text-opacity-90 text-xs sm:text-sm mt-0.5 hidden sm:block">Gestión profesional de barra</p>
-                </div>
+        <div class="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-1 sm:py-.5">
+            <div class="flex items-center gap-3">
+                <button id="hamburgerBtn" onclick="sbOpen()" aria-label="Abrir menú" aria-expanded="false">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                              d="M4 6h16M4 12h16M4 18h16"/>
+                    </svg>
+                </button>
+                <h1 class="flex-1 text-base font-bold text-white truncate">Control de Inventario</h1>
                 <div id="headerActions" class="flex gap-2 sm:gap-3 flex-shrink-0"></div>
             </div>
         </div>
     </div>
 
-    <div class="bg-white shadow-sm sticky top-[64px] sm:top-[88px] z-40 overflow-x-auto">
+    <!-- Tab bar original oculto — switchTab() lo necesita para leer .tab-btn[data-tab] -->
+    <div class="bg-white shadow-sm sticky" style="display:none!important" aria-hidden="true">
         <div class="max-w-7xl mx-auto px-2 sm:px-4 md:px-6 flex-shrink-0">
             <div class="flex gap-1 sm:gap-2 md:gap-8 overflow-x-auto" id="tabs">
-                <button onclick="switchTab('inicio')" data-tab="inicio" class="tab-btn py-3 sm:py-4 px-2 sm:px-3 text-sm sm:text-base font-medium transition-all duration-300 relative whitespace-nowrap text-gray-900">
-                    Inicio
-                    <div class="tab-indicator absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-purple-500 to-orange-500 rounded-t-full animate-slideIn"></div>
-                </button>
-                <button onclick="switchTab('productos')" data-tab="productos" class="tab-btn py-3 sm:py-4 px-2 sm:px-3 text-sm sm:text-base font-medium transition-all duration-300 relative whitespace-nowrap text-gray-600">
-                    Productos
-                </button>
-                <button onclick="switchTab('pedidos')" data-tab="pedidos" class="tab-btn py-3 sm:py-4 px-2 sm:px-3 text-sm sm:text-base font-medium transition-all duration-300 relative whitespace-nowrap text-gray-600">
-                    Pedidos
-                </button>
-                <button onclick="switchTab('inventario')" data-tab="inventario" class="tab-btn py-3 sm:py-4 px-2 sm:px-3 text-sm sm:text-base font-medium transition-all duration-300 relative whitespace-nowrap text-gray-600">
-                    Inventario
-                </button>
-                <button onclick="switchTab('historia')" data-tab="historia" class="tab-btn py-3 sm:py-4 px-2 sm:px-3 text-sm sm:text-base font-medium transition-all duration-300 relative whitespace-nowrap text-gray-600">
-                    Historia
-                </button>
+                <button onclick="switchTab('inicio')"    data-tab="inicio"     class="tab-btn relative whitespace-nowrap text-gray-900">Inicio<div class="tab-indicator absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-purple-500 to-orange-500 rounded-t-full animate-slideIn"></div></button>
+                <button onclick="switchTab('productos')" data-tab="productos"  class="tab-btn relative whitespace-nowrap text-gray-600">Productos</button>
+                <button onclick="switchTab('pedidos')"   data-tab="pedidos"    class="tab-btn relative whitespace-nowrap text-gray-600">Pedidos</button>
+                <button onclick="switchTab('inventario')"data-tab="inventario" class="tab-btn relative whitespace-nowrap text-gray-600">Inventario</button>
+                <button onclick="switchTab('historia')"  data-tab="historia"   class="tab-btn relative whitespace-nowrap text-gray-600">Historia</button>
             </div>
         </div>
     </div>
@@ -925,8 +1093,26 @@
             return ['Todos', ...Array.from(groups).sort()];
         }
 
+        // ── Sidebar ──────────────────────────────────────────────────
+        function sbOpen() {
+            document.getElementById('sidebar').classList.add('sb-open');
+            document.getElementById('sbOverlay').classList.add('sb-open');
+            document.getElementById('hamburgerBtn').setAttribute('aria-expanded','true');
+            document.body.style.overflow = 'hidden';
+        }
+        function sbClose() {
+            document.getElementById('sidebar').classList.remove('sb-open');
+            document.getElementById('sbOverlay').classList.remove('sb-open');
+            document.getElementById('hamburgerBtn').setAttribute('aria-expanded','false');
+            document.body.style.overflow = '';
+        }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') sbClose(); });
+
+        // ── switchTab — actualiza tanto el tab bar oculto como el sidebar ──
         function switchTab(tab) {
             activeTab = tab;
+
+            // 1. Actualiza tab bar oculto (necesario para el estado interno)
             document.querySelectorAll('.tab-btn').forEach(btn => {
                 const indicator = btn.querySelector('.tab-indicator');
                 if (btn.dataset.tab === tab) {
@@ -940,18 +1126,24 @@
                 } else {
                     btn.classList.remove('text-gray-900');
                     btn.classList.add('text-gray-600');
-                    if (indicator) {
-                        indicator.remove();
-                    }
+                    if (indicator) indicator.remove();
                 }
             });
+
+            // 2. Actualiza ítem activo en el sidebar
+            document.querySelectorAll('.sb-item').forEach(btn => {
+                if (btn.dataset.sbTab === tab) {
+                    btn.classList.add('sb-active');
+                } else {
+                    btn.classList.remove('sb-active');
+                }
+            });
+
             saveToLocalStorage();
             renderTab();
         }
 
         function switchArea(area) {
-            // CORRECCIÓN BUG 6: selectedArea debe actualizarse ANTES de guardar.
-            // Antes se guardaba el área anterior por error de orden.
             selectedArea = area;
             saveToLocalStorage();
             renderTab();
@@ -1724,9 +1916,6 @@
             }
         }
 
-        /* CORRECCIÓN: updateStockDirect() eliminada — estaba declarada pero
-           ningún elemento del DOM la llamaba. El stock se actualiza
-           exclusivamente a través del modal de inventario (openInventarioModal). */
 
         function saveInventorySnapshot() {
             let maxInvNum = 0;
@@ -2070,119 +2259,68 @@
         window.addEventListener('DOMContentLoaded', initializeApp);
     </script>
 
-<!-- ====== PATCH DE SEGURIDAD Y MEJORAS AUTOMÁTICAS ====== -->
+<!-- ====== PATCH DE SEGURIDAD ====== -->
 <script>
-/* ===============================
-MEJORAS DE SEGURIDAD Y ESTABILIDAD
-=============================== */
 
-// generateUUID — ELIMINADA (código muerto, nunca llamada; IDs se generan con generateProductId)
-
-// Validar números
-function safeNumber(value){
-    const n = parseFloat(value);
-    if(isNaN(n)) return 0;
-    return n;
-}
-
-// Limitar historial para evitar saturar localStorage
-function limitArray(arr, limit){
-    if(!Array.isArray(arr)) return arr;
-    while(arr.length > limit){
-        arr.shift();
-    }
-    return arr;
-}
-
-// safeSave / safeLoad — ELIMINADAS (código muerto, la app usa saveToLocalStorage y loadFromLocalStorage)
-
-// Validar botellas abiertas — FUNCIÓN ELIMINADA (código muerto, nunca llamada)
-// Se conserva la lógica de validación dentro de saveInventarioModal() que ya limpia los valores
-
-
-// Protección contra múltiples exportaciones
+// Protección contra múltiples exportaciones simultáneas
 let exportingExcel = false;
-
 const originalExport = window.exportToExcel;
 if(originalExport){
     window.exportToExcel = function(){
-        if(exportingExcel){
-            alert("Exportación en proceso...");
-            return;
-        }
+        if(exportingExcel){ alert("Exportación en proceso..."); return; }
         exportingExcel = true;
-        try{
-            originalExport();
-        }catch(e){
-            alert("Error exportando Excel");
-            console.error(e);
-        }
-        setTimeout(()=> exportingExcel=false,2000);
-    }
+        try{ originalExport(); }
+        catch(e){ alert("Error exportando Excel"); console.error(e); }
+        setTimeout(()=> exportingExcel = false, 2000);
+    };
 }
 
-// Protección importación Excel
+// Protección importación Excel — captura errores de archivo inválido
 const originalImport = window.handleFileImport;
 if(originalImport){
     window.handleFileImport = function(e){
-        try{
-            originalImport(e);
-        }catch(err){
-            alert("Archivo Excel inválido o corrupto");
-            console.error(err);
-        }
-    }
+        try{ originalImport(e); }
+        catch(err){ alert("Archivo Excel inválido o corrupto"); console.error(err); }
+    };
 }
 
-// Autoguardado inteligente
+// Autoguardado inteligente cada 10 s
 let lastSave = 0;
-
 function smartAutoSave(){
     const now = Date.now();
     if(now - lastSave < 10000) return;
     lastSave = now;
     if(window.saveToLocalStorage){
-        try{
-            saveToLocalStorage();
-        }catch(e){
-            console.warn("Error guardando");
-        }
+        try{ saveToLocalStorage(); }
+        catch(e){ console.warn("Error guardando"); }
     }
 }
+setInterval(smartAutoSave, 10000);
 
-setInterval(smartAutoSave,10000);
-
-// Validar duplicados por nombre
-function productNameExists(name){
-    if(!window.products) return false;
-    return products.some(p => 
-        p.name && p.name.toLowerCase() === name.toLowerCase()
-    );
-}
-
-// Protección al crear productos (evita nombres duplicados solo al CREAR, no al editar)
+// Protección nombres duplicados al crear/editar productos
 const originalSaveProduct = window.saveProduct;
 if(originalSaveProduct){
     window.saveProduct = function(){
         const nameInput = document.querySelector('#productName');
         if(nameInput){
             const name = nameInput.value.trim();
-            // Solo verificar duplicado si es un producto NUEVO (editingProductId es null)
-            // o si se está editando y el nombre pertenece a OTRO producto distinto
             const isDuplicate = products.some(p =>
                 p.name && p.name.toLowerCase() === name.toLowerCase() &&
                 p.id !== editingProductId
             );
-            if(isDuplicate){
-                alert("Ya existe un producto con ese nombre");
-                return;
-            }
+            if(isDuplicate){ alert("Ya existe un producto con ese nombre"); return; }
         }
         originalSaveProduct();
-    }
+    };
 }
 
-console.log("✔ Parches de seguridad cargados");
+// Limitar arrays para evitar saturar localStorage
+function limitArray(arr, limit){
+    if(!Array.isArray(arr)) return arr;
+    while(arr.length > limit) arr.shift();
+    return arr;
+}
+
 </script>
 
 </body>
