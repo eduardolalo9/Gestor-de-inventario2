@@ -979,6 +979,14 @@
             _searchDebounceTimer = setTimeout(() => {
                 saveToLocalStorage();
                 renderTab();
+                // CORRECCIÓN BUG 1: restaurar foco y cursor al final del input de búsqueda
+                // tras el re-render que destruye y recrea el DOM
+                const searchInput = document.querySelector('#tabContent input[type="text"]');
+                if (searchInput) {
+                    searchInput.focus();
+                    const len = searchInput.value.length;
+                    searchInput.setSelectionRange(len, len);
+                }
             }, 300);
         }
 
@@ -1474,7 +1482,9 @@
             if (products.length === 0) { showNotification('No hay productos para eliminar'); return; }
             if (confirm('¿Está seguro de que desea eliminar TODOS los productos? Esta acción no se puede deshacer.')) {
                 products = []; cart = []; inventarioConteo = {};
-                orders = orders.map(o => ({ ...o, products: [] })); // clear references to deleted products in pending orders
+                // CORRECCIÓN BUG 2: los pedidos son registros históricos inmutables.
+                // Solo se vacía el carrito activo; los productos de pedidos ya creados
+                // se conservan tal como estaban al momento de generarlos.
                 saveToLocalStorage();
                 showNotification('Todos los productos han sido eliminados');
                 renderTab();
@@ -1966,7 +1976,24 @@
                         orders = data.orders;
                         inventories = data.inventories;
                         cart = data.cart;
-                        inventarioConteo = data.inventarioConteo;
+
+                        // CORRECCIÓN BUG 3: aplicar la misma migración de formato que
+                        // loadFromLocalStorage usa, para soportar backups de versiones antiguas
+                        // donde inventarioConteo era plano { productId: { enteras, abiertas } }
+                        // en lugar del nuevo formato por área { productId: { almacen: {...}, ... } }
+                        const rawConteo = data.inventarioConteo || {};
+                        const migrated = {};
+                        Object.keys(rawConteo).forEach(prodId => {
+                            const val = rawConteo[prodId];
+                            if (!val || typeof val !== 'object') return;
+                            if (typeof val.enteras !== 'undefined' && !val.almacen && !val.barra1 && !val.barra2) {
+                                migrated[prodId] = { almacen: val };
+                            } else {
+                                migrated[prodId] = val;
+                            }
+                        });
+                        inventarioConteo = migrated;
+
                         activeTab = data.activeTab || 'inicio';
                         searchTerm = data.searchTerm || '';
                         selectedGroup = data.selectedGroup || 'Todos';
@@ -1986,13 +2013,17 @@
             reader.readAsText(file);
         }
 
-        document.getElementById('fileInput').addEventListener('change', function(e) { window.handleFileImport(e); });
-        document.getElementById('importDataInput').addEventListener('change', function(e) { window.importFullData(e); });
-
         // ==================== INICIALIZACIÓN UNIFICADA ====================
         // Un único listener DOMContentLoaded que centraliza toda la lógica de arranque
         // (incluye el patch de seguridad que antes era un bloque separado).
+        // CORRECCIÓN BUG 6: los listeners de fileInput e importDataInput se registran
+        // aquí dentro (no a nivel de script suelto) para garantizar que los elementos
+        // ya existen en el DOM independientemente de dónde esté colocado el <script>.
         window.addEventListener('DOMContentLoaded', function() {
+            // --- Listeners de archivos ---
+            document.getElementById('fileInput').addEventListener('change', function(e) { window.handleFileImport(e); });
+            document.getElementById('importDataInput').addEventListener('change', function(e) { window.importFullData(e); });
+
             // --- App principal ---
             initializeApp();
 
