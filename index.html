@@ -4,9 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Sistema de control de inventario para barra — gestión de productos, pedidos y conteo físico.">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://wa.me; img-src 'self' data:; connect-src 'self';">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
-    <title>Control de Inventario - Barra</title>
+    <!-- FIX 3: CSP granular — unsafe-inline solo donde es estrictamente necesario -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src  'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdnjs.cloudflare.com;
+        style-src   'self' 'unsafe-inline' https://fonts.googleapis.com;
+        font-src    https://fonts.gstatic.com data:;
+        img-src     'self' data:;
+        connect-src 'self' https://wa.me;
+        object-src  'none';
+        base-uri    'self';
+        form-action 'self';
+    ">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%A6%3C/text%3E%3C/svg%3E"><!-- BUG-FIX m2: favicon URL-encoded -->
+    <title>BarInventory - Barra</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -518,7 +529,7 @@
     <!-- Sidebar -->
     <div id="sidebar" role="navigation" aria-label="Menú principal">
         <div id="sbHead">
-            <span class="sb-logo">Control de Inventario</span>
+            <span class="sb-logo">BarInventory</span>
             <button type="button" id="sbCloseBtn" onclick="sbClose()" aria-label="Cerrar menú">
                 <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
@@ -587,7 +598,7 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 6h16M4 12h16M4 18h16"/>
                     </svg>
                 </button>
-                <h1 class="flex-1 text-base font-bold text-white truncate">Control de Inventario</h1>
+                <h1 class="flex-1 text-base font-bold text-white truncate">BarInventory</h1>
                 <div id="headerActions" class="flex gap-2 sm:gap-3 flex-shrink-0"></div>
             </div>
         </div>
@@ -783,21 +794,62 @@
         };
 
         // ==================== PERSISTENCIA ====================
-        function saveToLocalStorage() {
+        // FIX 2 — localStorage: guardado granular con control de cuota
+        const LS_WARN_BYTES = 4 * 1024 * 1024; // advertir al superar 4 MB de los ~5 MB totales
+        let _lsQuotaWarned = false;
+
+        function estimateStorageUsed() {
+            let total = 0;
             try {
-                localStorage.setItem('inventarioApp_products', JSON.stringify(products));
-                localStorage.setItem('inventarioApp_orders', JSON.stringify(orders));
-                localStorage.setItem('inventarioApp_inventories', JSON.stringify(inventories));
-                localStorage.setItem('inventarioApp_cart', JSON.stringify(cart));
-                localStorage.setItem('inventarioApp_activeTab', activeTab);
-                localStorage.setItem('inventarioApp_selectedGroup', selectedGroup);
-                localStorage.setItem('inventarioApp_selectedArea', selectedArea);
-                localStorage.setItem('inventarioApp_searchTerm', searchTerm);
-                localStorage.setItem('inventarioApp_expandedInventories', JSON.stringify(Array.from(expandedInventories)));
-                localStorage.setItem('inventarioApp_inventarioConteo', JSON.stringify(inventarioConteo));
-            } catch (e) {
-                console.error('Error al guardar en localStorage:', e);
-                showNotification('⚠️ Almacenamiento lleno. Elimina historiales o productos para liberar espacio.');
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    const val = localStorage.getItem(key) || '';
+                    total += (key.length + val.length) * 2; // UTF-16: 2 bytes/char
+                }
+            } catch (_) {}
+            return total;
+        }
+
+        function saveToLocalStorage() {
+            // Pares clave → valor a guardar (las claves "grandes" se guardan individualmente
+            // para poder atrapar el error justo en la clave que lo provoca)
+            const entries = [
+                ['inventarioApp_products',            JSON.stringify(products)],
+                ['inventarioApp_orders',              JSON.stringify(orders)],
+                ['inventarioApp_inventories',         JSON.stringify(inventories)],
+                ['inventarioApp_cart',                JSON.stringify(cart)],
+                ['inventarioApp_activeTab',           activeTab],
+                ['inventarioApp_selectedGroup',       selectedGroup],
+                ['inventarioApp_selectedArea',        selectedArea],
+                ['inventarioApp_searchTerm',          searchTerm],
+                ['inventarioApp_expandedInventories', JSON.stringify(Array.from(expandedInventories))],
+                ['inventarioApp_inventarioConteo',    JSON.stringify(inventarioConteo)]
+            ];
+
+            // Advertir si nos acercamos al límite (solo una vez por sesión)
+            if (!_lsQuotaWarned) {
+                const used = estimateStorageUsed();
+                if (used > LS_WARN_BYTES) {
+                    _lsQuotaWarned = true;
+                    showNotification('⚠️ Almacenamiento al ' + Math.round(used / (5*1024*1024) * 100) + '%. Exporta y limpia historiales.');
+                }
+            }
+
+            for (const [key, value] of entries) {
+                try {
+                    localStorage.setItem(key, value);
+                } catch (e) {
+                    console.error('Error al guardar "' + key + '":', e);
+                    if (key === 'inventarioApp_inventories') {
+                        showNotification('⚠️ Historial muy grande. Usa "Exportar datos" y elimina historiales antiguos.');
+                    } else if (key === 'inventarioApp_inventarioConteo') {
+                        showNotification('⚠️ Conteo de inventario no pudo guardarse. Exporta tus datos ahora.');
+                    } else {
+                        showNotification('⚠️ Error al guardar datos. Exporta un respaldo inmediatamente.');
+                    }
+                    // Si falla una clave crítica, detener para no corromper el estado parcial
+                    break;
+                }
             }
         }
 
@@ -835,7 +887,7 @@
             Object.keys(parsedConteo).forEach(prodId => {
                 const val = parsedConteo[prodId];
                 if (!val || typeof val !== 'object') return; // skip invalid entries
-                if (typeof val.enteras !== 'undefined' && !val.almacen && !val.barra1 && !val.barra2) {
+                if (typeof val.enteras !== 'undefined' && val.almacen === undefined && val.barra1 === undefined && val.barra2 === undefined) {  // BUG-FIX M3: usar === undefined para no fallar cuando area vale 0
                     migrated[prodId] = { almacen: val };
                 } else {
                     migrated[prodId] = val;
@@ -844,22 +896,27 @@
             inventarioConteo = migrated;
         }
 
+        // BUG-FIX m3: updateNetworkStatus definida a nivel global
+        function updateNetworkStatus() {
+            const existing = document.getElementById('networkStatus');
+            if (existing) existing.remove();
+            if (!navigator.onLine) {
+                const bar = document.createElement('div');
+                bar.id = 'networkStatus';
+                bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#f59e0b;color:#fff;text-align:center;padding:6px;font-size:13px;font-weight:600;z-index:9999;';
+                bar.textContent = '⚠️ Sin conexión — los datos están guardados localmente';
+                document.body.appendChild(bar);
+            }
+        }
+
         function initializeApp() {
             loadFromLocalStorage();
+            // FIX 1 — sincronizar stockByArea con inventarioConteo al arranque
+            syncStockByAreaFromConteo();
 
             window.addEventListener('beforeunload', () => saveToLocalStorage());
 
-            function updateNetworkStatus() {
-                const existing = document.getElementById('networkStatus');
-                if (existing) existing.remove();
-                if (!navigator.onLine) {
-                    const bar = document.createElement('div');
-                    bar.id = 'networkStatus';
-                    bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#f59e0b;color:#fff;text-align:center;padding:6px;font-size:13px;font-weight:600;z-index:9999;';
-                    bar.textContent = '⚠️ Sin conexión — los datos están guardados localmente';
-                    document.body.appendChild(bar);
-                }
-            }
+            // BUG-FIX m3: updateNetworkStatus ahora es global (definida fuera de initializeApp)
             window.addEventListener('online',  updateNetworkStatus);
             window.addEventListener('offline', updateNetworkStatus);
             updateNetworkStatus();
@@ -871,12 +928,12 @@
                     { id: 'PRD-003', name: 'Whisky Escocés', stockByArea: { almacen: 4, barra1: 2, barra2: 1 }, unit: 'Botellas', group: 'Premium' },
                     { id: 'PRD-004', name: 'Gin London Dry', stockByArea: { almacen: 10, barra1: 3, barra2: 2 }, unit: 'Botellas', group: 'Premium' },
                     { id: 'PRD-005', name: 'Tequila Reposado', stockByArea: { almacen: 3, barra1: 2, barra2: 1 }, unit: 'Botellas', group: 'Premium' },
-                    { id: 'PRD-006', name: 'Cerveza Nacional', stockByArea: { almacen: 48, barra1: 24, barra2: 18 }, unit: 'Unidades', group: 'Bebidas' },
-                    { id: 'PRD-007', name: 'Cerveza Importada', stockByArea: { almacen: 18, barra1: 12, barra2: 6 }, unit: 'Unidades', group: 'Bebidas' },
+                    { id: 'PRD-006', name: 'Cerveza Nacional', stockByArea: { almacen: 48, barra1: 24, barra2: 18 }, unit: 'Unidad', group: 'Bebidas' },
+                    { id: 'PRD-007', name: 'Cerveza Importada', stockByArea: { almacen: 18, barra1: 12, barra2: 6 }, unit: 'Unidad', group: 'Bebidas' },
                     { id: 'PRD-008', name: 'Vino Tinto Reserva', stockByArea: { almacen: 15, barra1: 6, barra2: 4 }, unit: 'Botellas', group: 'Vinos' },
                     { id: 'PRD-009', name: 'Vino Blanco', stockByArea: { almacen: 12, barra1: 5, barra2: 3 }, unit: 'Botellas', group: 'Vinos' },
-                    { id: 'PRD-010', name: 'Coca Cola', stockByArea: { almacen: 36, barra1: 20, barra2: 15 }, unit: 'Unidades', group: 'Bebidas' },
-                    { id: 'PRD-011', name: 'Agua Mineral', stockByArea: { almacen: 42, barra1: 25, barra2: 18 }, unit: 'Unidades', group: 'Bebidas' },
+                    { id: 'PRD-010', name: 'Coca Cola', stockByArea: { almacen: 36, barra1: 20, barra2: 15 }, unit: 'Unidad', group: 'Bebidas' },
+                    { id: 'PRD-011', name: 'Agua Mineral', stockByArea: { almacen: 42, barra1: 25, barra2: 18 }, unit: 'Unidad', group: 'Bebidas' },
                     { id: 'PRD-012', name: 'Jugo de Naranja', stockByArea: { almacen: 8, barra1: 4, barra2: 3 }, unit: 'Litros', group: 'Bebidas' },
                     { id: 'PRD-013', name: 'Limones', stockByArea: { almacen: 5, barra1: 2, barra2: 1.5 }, unit: 'Kilos', group: 'Frutas' },
                     { id: 'PRD-014', name: 'Hielo', stockByArea: { almacen: 20, barra1: 10, barra2: 8 }, unit: 'Kilos', group: 'Insumos' }
@@ -891,6 +948,22 @@
         function getTotalStock(product) {
             if (!product.stockByArea) return 0;
             return (product.stockByArea.almacen || 0) + (product.stockByArea.barra1 || 0) + (product.stockByArea.barra2 || 0);
+        }
+
+        // FIX 1 — Fuente única de verdad: inventarioConteo → stockByArea
+        // Reconstruye product.stockByArea para todos los productos a partir de
+        // inventarioConteo, evitando divergencias entre ambas estructuras.
+        function syncStockByAreaFromConteo() {
+            products.forEach(p => {
+                if (!p.stockByArea) p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
+                Object.keys(areas).forEach(area => {
+                    const d = inventarioConteo[p.id] && inventarioConteo[p.id][area];
+                    // Solo sobreescribir si hay un dato explícito en conteo
+                    if (d && typeof d.enteras === 'number') {
+                        p.stockByArea[area] = d.enteras;
+                    }
+                });
+            });
         }
 
         function getAvailableGroups() {
@@ -912,7 +985,14 @@
             // Devolver foco al botón hamburguesa para accesibilidad
             document.getElementById('hamburgerBtn').focus();
         }
-        document.addEventListener('keydown', e => { if (e.key === 'Escape') sbClose(); });
+        // BUG-FIX C4: ESC solo cierra el sidebar si ningún modal está abierto
+        document.addEventListener('keydown', e => {
+            if (e.key !== 'Escape') return;
+            const anyModal = ['productModal','orderModal','inventarioModal'].some(
+                id => !document.getElementById(id).classList.contains('hidden')
+            );
+            if (!anyModal) sbClose();
+        });
 
         function switchTab(tab) {
             activeTab = tab;
@@ -996,9 +1076,33 @@
             renderTab();
         }
 
+        // FIX 4 — Re-render: preservar scroll y foco; evitar salto visual innecesario
+        // BUG-FIX m4: _getElementSelector también detecta input de búsqueda por placeholder
+        function _getElementSelector(el) {
+            if (!el || el === document.body) return null;
+            if (el.id) return '#' + el.id;
+            // Detectar el input de búsqueda por su placeholder único
+            if (el.tagName === 'INPUT' && el.placeholder === 'Buscar...') {
+                return '#tabContent input[placeholder="Buscar..."]';
+            }
+            // Para inputs dentro de tabContent: guardar posición en el formulario
+            const parent = el.closest('[data-render-key]');
+            if (parent) return '[data-render-key="' + parent.dataset.renderKey + '"] ' + el.tagName.toLowerCase();
+            return null;
+        }
+
         function renderTab() {
             updateHeaderActions();
             const content = document.getElementById('tabContent');
+
+            // FIX 4: capturar estado antes del re-render
+            const scrollY  = window.scrollY || window.pageYOffset;
+            const focused  = document.activeElement;
+            const focusedSelector = _getElementSelector(focused);
+            // Preservar cursor en inputs de texto (p.ej. buscador)
+            const cursorPos = (focused && focused.selectionStart !== undefined) ? focused.selectionStart : null;
+            const focusedValue = (focused && focused.tagName === 'INPUT') ? focused.value : null;
+
             content.style.animation = 'none';
             void content.offsetWidth;
             content.style.animation = '';
@@ -1009,6 +1113,28 @@
                 case 'pedidos':     content.innerHTML = renderPedidosTab(); break;
                 case 'inventario':  content.innerHTML = renderInventarioTab(); break;
                 case 'historia':    content.innerHTML = renderHistoriaTab(); break;
+            }
+
+            // FIX 4: restaurar scroll (en siguiente frame para no luchar con el layout)
+            if (scrollY > 0) {
+                requestAnimationFrame(() => { window.scrollTo(0, scrollY); });
+            }
+
+            // FIX 4: restaurar foco y cursor si el elemento existe en el nuevo DOM
+            if (focusedSelector) {
+                requestAnimationFrame(() => {
+                    try {
+                        const restored = document.querySelector(focusedSelector);
+                        if (restored && typeof restored.focus === 'function') {
+                            restored.focus({ preventScroll: true });
+                            if (cursorPos !== null && restored.setSelectionRange) {
+                                const len = (focusedValue !== null ? focusedValue : restored.value).length;
+                                const pos = Math.min(cursorPos, len);
+                                restored.setSelectionRange(pos, pos);
+                            }
+                        }
+                    } catch (_) { /* selector inválido — ignorar */ }
+                });
             }
         }
 
@@ -1047,11 +1173,10 @@
                 html += '<option value="' + group + '"' + (selectedGroup === group ? ' selected' : '') + '>' + escapeHtml(group) + '</option>';
             });
             html += '</select></div>';
-            html += '<div class="bg-white rounded-xl sm:rounded-2xl shadow-md overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm sm:text-base"><thead class="bg-gradient-to-r from-purple-600 to-blue-600"><tr><th class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-left text-xs sm:text-sm font-semibold text-white">Nombre del Producto</th><th class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-left text-xs sm:text-sm font-semibold text-white hidden md:table-cell">Grupo</th><th class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-left text-xs sm:text-sm font-semibold text-white">Unidad</th><th class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-center text-xs sm:text-sm font-semibold text-white">Stock</th><th class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-center text-xs sm:text-sm font-semibold text-white">Acc</th></tr></thead><tbody class="divide-y divide-gray-200">';
+            html += '<div class="bg-white rounded-xl sm:rounded-2xl shadow-md overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm sm:text-base"><thead class="bg-gradient-to-r from-purple-600 to-blue-600"><tr><th class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-left text-xs sm:text-sm font-semibold text-white">Nombre del Producto</th><th class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-left text-xs sm:text-sm font-semibold text-white hidden md:table-cell">Grupo</th><th class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-left text-xs sm:text-sm font-semibold text-white">Unidad</th><th class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-center text-xs sm:text-sm font-semibold text-white">Acc</th></tr></thead><tbody class="divide-y divide-gray-200">';
             filteredProducts.forEach((product, idx) => {
-                const totalStock = getTotalStock(product);
                 const delay = Math.min(idx * 35, 350);
-                html += '<tr class="hover:bg-purple-50 transition-colors" style="animation: rowIn 0.25s ease-out both; animation-delay:' + delay + 'ms"><td class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 font-medium text-gray-900 text-xs sm:text-sm">' + escapeHtml(product.name) + '</td><td class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-gray-600 hidden md:table-cell text-xs sm:text-sm">' + escapeHtml(product.group || 'General') + '</td><td class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-gray-600 text-xs sm:text-sm">' + escapeHtml((product.unit || '').substring(0, 3)) + '</td><td class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-center font-semibold text-xs sm:text-sm text-gray-900">' + totalStock + '</td><td class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4"><div class="flex items-center justify-center gap-1"><button onclick="editProduct(\'' + escapeHtml(product.id) + '\')" class="p-1.5 sm:p-2.5 bg-gradient-to-br from-blue-500 to-purple-500 text-white rounded-lg sm:rounded-xl hover:shadow-lg transition-all transform active:scale-95 min-w-[36px] sm:min-w-[48px] min-h-[36px] sm:min-h-[48px] flex items-center justify-center"><svg class="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg></button><button onclick="deleteProduct(\'' + escapeHtml(product.id) + '\')" class="p-1.5 sm:p-2.5 bg-gradient-to-br from-red-500 to-orange-500 text-white rounded-lg sm:rounded-xl hover:shadow-lg transition-all transform active:scale-95 min-w-[36px] sm:min-w-[48px] min-h-[36px] sm:min-h-[48px] flex items-center justify-center"><svg class="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button></div></td></tr>';
+                html += '<tr class="hover:bg-purple-50 transition-colors" style="animation: rowIn 0.25s ease-out both; animation-delay:' + delay + 'ms"><td class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 font-medium text-gray-900 text-xs sm:text-sm">' + escapeHtml(product.name) + '</td><td class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-gray-600 hidden md:table-cell text-xs sm:text-sm">' + escapeHtml(product.group || 'General') + '</td><td class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 text-gray-600 text-xs sm:text-sm">' + escapeHtml((product.unit || '').substring(0, 3)) + '</td><td class="px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4"><div class="flex items-center justify-center gap-1"><button onclick="editProduct(\'' + escapeHtml(product.id) + '\')" class="p-1.5 sm:p-2.5 bg-gradient-to-br from-blue-500 to-purple-500 text-white rounded-lg sm:rounded-xl hover:shadow-lg transition-all transform active:scale-95 min-w-[36px] sm:min-w-[48px] min-h-[36px] sm:min-h-[48px] flex items-center justify-center"><svg class="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg></button><button onclick="deleteProduct(\'' + escapeHtml(product.id) + '\')" class="p-1.5 sm:p-2.5 bg-gradient-to-br from-red-500 to-orange-500 text-white rounded-lg sm:rounded-xl hover:shadow-lg transition-all transform active:scale-95 min-w-[36px] sm:min-w-[48px] min-h-[36px] sm:min-h-[48px] flex items-center justify-center"><svg class="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button></div></td></tr>';
             });
             html += '</tbody></table></div></div>';
             return html;
@@ -1179,7 +1304,7 @@
 
         function saveInventarioModal() {
             if (!inventarioModalProductId) return;
-            const enteras = parseFloat(document.getElementById('inv_enteras').value) || 0;
+            const enteras = Math.max(0, Math.floor(parseFloat(document.getElementById('inv_enteras').value) || 0));  // BUG-FIX m1: enteras siempre entero no negativo
             const container = document.getElementById('inv_abiertasContainer');
             const abiertas = [];
             for (let i = 0; i < container.children.length; i++) {
@@ -1188,11 +1313,9 @@
             }
             if (!inventarioConteo[inventarioModalProductId]) inventarioConteo[inventarioModalProductId] = {};
             inventarioConteo[inventarioModalProductId][selectedArea] = { enteras, abiertas };
-            const product = products.find(p => p.id === inventarioModalProductId);
-            if (product) {
-                if (!product.stockByArea) product.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
-                product.stockByArea[selectedArea] = enteras;
-            }
+            // BUG-FIX C1: variable `product` era dead-code tras Fix 1; eliminada
+            // FIX 1 — mantener stockByArea sincronizado desde inventarioConteo
+            syncStockByAreaFromConteo();
             saveToLocalStorage();
             showNotification('Conteo guardado en ' + areas[selectedArea]);
             closeInventarioModal();
@@ -1203,7 +1326,7 @@
             const filteredProducts = filterByGroup();
             let html = '<div class="mb-4 sm:mb-6">';
             html += '<div class="flex flex-col gap-3 mb-3 sm:mb-4">';
-            html += '<h2 class="text-xl sm:text-2xl font-bold text-gray-900">Gestión de Inventario</h2>';
+            html += '<h2 class="text-xl sm:text-2xl font-bold text-gray-900">Inventario Áreas</h2>';
             html += '<div class="flex flex-wrap gap-2 sm:gap-3">';
             html += '<button onclick="resetAllInventario()" class="bg-gradient-to-r from-red-500 to-orange-500 text-white px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-base rounded-lg sm:rounded-xl font-medium hover:shadow-lg transition-all transform active:scale-95 whitespace-nowrap flex items-center gap-1 sm:gap-2"><svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg><span>Resetear</span></button>';
             html += '<button onclick="document.getElementById(\'fileInput\').click()" class="border-2 border-purple-500 text-purple-600 px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-base rounded-lg sm:rounded-xl flex items-center gap-1 sm:gap-2 hover:bg-purple-50 transition-all font-medium whitespace-nowrap"><svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg><span class="hidden sm:inline">Importar</span></button>';
@@ -1323,7 +1446,7 @@
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const safeDate = inv.date.replace(/[/:,\s]/g, '-').replace(/-+/g, '-').replace(/-$/, '');
+            const safeDate = (inv.date || '').replace(/[/:,\s]/g, '-').replace(/-+/g, '-').replace(/-$/, '');  // BUG-FIX M2
             a.download = inv.id + '_' + safeDate + '.csv';
             document.body.appendChild(a);
             a.click();
@@ -1670,17 +1793,48 @@
                     return {
                         id: p.id,
                         name: p.name,
-                        stock: p.stockByArea[selectedArea] || 0,
+                        stock: (p.stockByArea && p.stockByArea[selectedArea]) || 0,  // BUG-FIX C3
                         abiertas: areaData ? areaData.abiertas : [],
                         unit: p.unit,
                         group: p.group || 'General'
                     };
                 }),
-                totalProducts: products.reduce((sum, p) => sum + (p.stockByArea[selectedArea] || 0), 0)
+                totalProducts: products.reduce((sum, p) => sum + ((p.stockByArea && p.stockByArea[selectedArea]) || 0), 0)  // BUG-FIX C3
             };
             inventories.push(snapshot);
             saveToLocalStorage();
             showNotification('Inventario de ' + areas[selectedArea] + ' guardado');
+        }
+
+        // FIX 5 — Parseo robusto de números provenientes de Excel/CSV
+        function parseExcelNumber(val) {
+            if (val === null || val === undefined) return 0;
+            // SheetJS ya devuelve numbers para celdas numéricas — pasar directo
+            if (typeof val === 'number') {
+                // Rechazar seriales de fecha Excel (> 2958465 = 31/12/9999)
+                if (!isFinite(val) || val > 2958465) return 0;
+                return val;
+            }
+            const str = String(val).trim()
+                .replace(/[€$£¥₩₹\s]/g, '')  // quitar monedas y espacios
+                .replace(/^-/, m => m);              // BUG-FIX M1: conservar signo negativo (positivo no necesita marca)
+
+            if (!str || str === '-' || str === '+') return 0;
+
+            // Formato europeo con punto como miles y coma como decimal: 1.234,56
+            if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(str)) {
+                return parseFloat(str.replace(/\./g, '').replace(',', '.')) || 0;
+            }
+            // Coma como único separador decimal: 1234,56
+            if (/^\d+(,\d+)$/.test(str)) {
+                return parseFloat(str.replace(',', '.')) || 0;
+            }
+            // Punto como miles sin decimal: 1.234
+            if (/^\d{1,3}(\.\d{3})+$/.test(str)) {
+                return parseFloat(str.replace(/\./g, '')) || 0;
+            }
+            // Formato estándar o ya limpio
+            return parseFloat(str) || 0;
         }
 
         function handleFileImport(event) {
@@ -1752,10 +1906,10 @@
                             if (row[key] !== undefined) { group = String(row[key]).trim(); break; }
                         }
 
-                        // Buscar stock (para almacén, pero solo como inicialización)
+                        // Buscar stock — FIX 5: usar parseExcelNumber para manejar formatos
                         let stock = 0;
                         for (const key of columnMap.stock) {
-                            if (row[key] !== undefined) { stock = parseFloat(row[key]) || 0; break; }
+                            if (row[key] !== undefined) { stock = parseExcelNumber(row[key]); break; }
                         }
 
                         const product = {
@@ -1986,13 +2140,15 @@
                         Object.keys(rawConteo).forEach(prodId => {
                             const val = rawConteo[prodId];
                             if (!val || typeof val !== 'object') return;
-                            if (typeof val.enteras !== 'undefined' && !val.almacen && !val.barra1 && !val.barra2) {
+                            if (typeof val.enteras !== 'undefined' && val.almacen === undefined && val.barra1 === undefined && val.barra2 === undefined) {  // BUG-FIX M3: usar === undefined para no fallar cuando area vale 0
                                 migrated[prodId] = { almacen: val };
                             } else {
                                 migrated[prodId] = val;
                             }
                         });
                         inventarioConteo = migrated;
+                        // FIX 1 — reconstruir stockByArea después de importar
+                        syncStockByAreaFromConteo();
 
                         activeTab = data.activeTab || 'inicio';
                         searchTerm = data.searchTerm || '';
