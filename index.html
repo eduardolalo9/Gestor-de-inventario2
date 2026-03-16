@@ -995,7 +995,7 @@
             <p class="text-sm text-gray-500 mb-2" id="inventarioModalSubtitle"></p>
             <div class="mb-4">
                 <label for="inv_enteras" class="block text-sm font-semibold text-gray-700 mb-2">🍾 Botellas Enteras</label>
-                <input type="number" id="inv_enteras" min="0" step="1" value="0" class="w-full px-4 py-2 bg-white text-gray-900 border-2 border-purple-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent text-center text-lg font-bold">
+                <input type="number" id="inv_enteras" min="0" step="0.001" value="0" class="w-full px-4 py-2 bg-white text-gray-900 border-2 border-purple-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent text-center text-lg font-bold">
             </div>
             <div class="mb-4">
                 <div class="flex items-center justify-between mb-2">
@@ -1606,7 +1606,7 @@
 
         function saveInventarioModal() {
             if (!inventarioModalProductId) return;
-            const enteras = Math.max(0, Math.floor(parseFloat(document.getElementById('inv_enteras').value) || 0));  // BUG-FIX m1: enteras siempre entero no negativo
+            const enteras = Math.max(0, parseFloat(document.getElementById('inv_enteras').value) || 0);  // BUG-FIX m1: enteras siempre entero no negativo
             const container = document.getElementById('inv_abiertasContainer');
             const abiertas = [];
             for (let i = 0; i < container.children.length; i++) {
