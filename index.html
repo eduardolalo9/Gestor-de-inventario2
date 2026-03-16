@@ -2,6 +2,17 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
+    <script>
+        // Evitar FOUC (Flash Of Unstyled Content): aplicar tema antes de renderizar
+        (function() {
+            try {
+                var t = localStorage.getItem('inventarioApp_theme') || 'dark';
+                document.documentElement.setAttribute('data-theme', t);
+            } catch(_) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Sistema de control de inventario para barra — gestión de productos, pedidos y conteo físico.">
     <!-- FIX 3: CSP granular — unsafe-inline solo donde es estrictamente necesario -->
@@ -46,6 +57,28 @@
             --shadow-modal: 0 32px 80px rgba(0,0,0,0.65), 0 8px 24px rgba(0,0,0,0.40);
             --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
             --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        /* ================================================
+           TEMA CLARO — overrides de variables
+           ================================================ */
+        html[data-theme="light"] {
+            --ink:         #f4f5fb;
+            --surface:     #eaebf5;
+            --card:        #ffffff;
+            --border:      rgba(0,0,0,0.08);
+            --border-mid:  rgba(0,0,0,0.15);
+            --accent:      #6c63ff;
+            --accent-2:    #ff6b6b;
+            --accent-3:    #e6a817;
+            --accent-green:#06d6a0;
+            --accent-blue: #4cc9f0;
+            --txt-primary:   #0d0e14;
+            --txt-secondary: #4a4b6a;
+            --txt-muted:     #8b8ca8;
+            --glow-accent: 0 0 24px rgba(108,99,255,0.12);
+            --shadow-card: 0 2px 12px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.04);
+            --shadow-modal: 0 32px 80px rgba(0,0,0,0.18), 0 8px 24px rgba(0,0,0,0.10);
         }
 
         * { box-sizing: border-box; }
@@ -516,6 +549,214 @@
             opacity: 0.5;
             pointer-events: none;
         }
+
+        /* ================================================
+           OVERRIDES MODO CLARO — colores hardcodeados
+           ================================================ */
+        html[data-theme="light"] body {
+            background-image:
+                radial-gradient(ellipse 80% 50% at 20% -10%, rgba(108,99,255,0.07) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 40% at 80% 110%, rgba(255,107,107,0.04) 0%, transparent 55%);
+        }
+        html[data-theme="light"] .bg-gray-100 { background-color: #e2e3ef !important; }
+        html[data-theme="light"] thead.bg-gradient-to-r {
+            background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%) !important;
+        }
+        html[data-theme="light"] thead.bg-gradient-to-r th { color: #4c3db5 !important; }
+        html[data-theme="light"] #sidebar {
+            background: linear-gradient(165deg,#f0effc 0%,#f8f7ff 55%,#ffffff 100%);
+            border-right: 1px solid rgba(108,99,255,0.15);
+        }
+        html[data-theme="light"] #sbHead {
+            background: linear-gradient(135deg,rgba(108,99,255,0.09) 0%,transparent 100%);
+            border-bottom: 1px solid rgba(108,99,255,0.10);
+        }
+        html[data-theme="light"] #sbCloseBtn {
+            background: rgba(0,0,0,0.06);
+            border-color: rgba(0,0,0,0.10);
+            color: var(--txt-secondary);
+        }
+        html[data-theme="light"] #sbCloseBtn:hover { background: rgba(255,107,107,0.12); color: #cc4444; }
+        html[data-theme="light"] .sb-item { color: var(--txt-secondary); }
+        html[data-theme="light"] .sb-item:hover { background: rgba(108,99,255,0.07); color: var(--txt-primary); }
+        html[data-theme="light"] .sb-item.sb-active {
+            background: linear-gradient(135deg,rgba(108,99,255,0.14) 0%,rgba(76,201,240,0.06) 100%);
+            border-color: rgba(108,99,255,0.22);
+            color: var(--txt-primary);
+        }
+        html[data-theme="light"] #sbFoot p { color: var(--txt-muted); }
+        html[data-theme="light"] body > .sticky.top-0 {
+            background: linear-gradient(135deg, #3b2fa8 0%, #1a2485 40%, #2d1060 100%) !important;
+        }
+        html[data-theme="light"] #toast > div {
+            background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%) !important;
+            border: 1px solid rgba(108,99,255,0.30) !important;
+            color: #3b2fa8 !important;
+        }
+        html[data-theme="light"] #toast .w-2.h-2.rounded-full {
+            background: var(--accent) !important;
+        }
+        html[data-theme="light"] #productModal > div,
+        html[data-theme="light"] #orderModal > div,
+        html[data-theme="light"] #inventarioModal > div {
+            background-color: #ffffff !important;
+            border: 1px solid rgba(108,99,255,0.20) !important;
+        }
+        html[data-theme="light"] tbody tr:hover { background-color: rgba(108,99,255,0.04) !important; }
+        html[data-theme="light"] .hover\:bg-purple-50:hover { background-color: rgba(108,99,255,0.06) !important; }
+        html[data-theme="light"] .bg-purple-50              { background-color: rgba(108,99,255,0.06) !important; }
+        html[data-theme="light"] ::selection { background: rgba(108,99,255,0.18); color: #3b2fa8; }
+        html[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(108,99,255,0.25); }
+        html[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(108,99,255,0.45); }
+        html[data-theme="light"] select { color-scheme: light; }
+        html[data-theme="light"] input:disabled { background-color: #e8e9f3 !important; }
+
+
+        /* Botón toggle tema */
+        #themeToggleBtn:hover { background: rgba(108,99,255,.35) !important; transform: scale(1.06); }
+        #themeToggleBtn:active { transform: scale(.94) !important; }
+        html[data-theme="light"] #themeToggleBtn { background: rgba(255,255,255,.20) !important; }
+
+        /* ================================================
+           MATERIAL DESIGN — Tarjetas de Inventario
+           ================================================ */
+        .inv-card {
+            background: var(--card);
+            border-radius: 18px;
+            border: 1px solid var(--border);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.28), 0 1px 3px rgba(0,0,0,0.18);
+            overflow: hidden;
+            transition: box-shadow 0.22s ease, transform 0.18s ease, border-color 0.22s ease;
+            position: relative;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .inv-card:hover { box-shadow: 0 6px 24px rgba(0,0,0,0.38), 0 2px 8px rgba(0,0,0,0.24); border-color: var(--border-mid); }
+        .inv-card:active { transform: scale(0.985); }
+        .inv-card.has-data { border-left: 3px solid var(--accent); }
+
+        .inv-card__ripple {
+            position: absolute; inset: 0; border-radius: inherit;
+            background: radial-gradient(circle at center, rgba(108,99,255,0.12) 0%, transparent 70%);
+            opacity: 0; pointer-events: none; transition: opacity 0.3s ease;
+        }
+        .inv-card:active .inv-card__ripple { opacity: 1; }
+
+        .inv-card__header {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            padding: 14px 16px 10px;
+            gap: 10px;
+        }
+        .inv-card__name {
+            font-family: 'Syne', sans-serif;
+            font-weight: 700; font-size: 0.95rem;
+            color: var(--txt-primary);
+            line-height: 1.25;
+            flex: 1; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .inv-card__code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.68rem; font-weight: 500;
+            color: var(--txt-muted);
+            background: rgba(108,99,255,0.10);
+            border: 1px solid rgba(108,99,255,0.15);
+            border-radius: 6px;
+            padding: 2px 7px;
+            flex-shrink: 0;
+            letter-spacing: 0.03em;
+        }
+
+        .inv-card__chips {
+            display: flex; gap: 8px;
+            padding: 0 16px 12px;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+        .inv-card__chips::-webkit-scrollbar { display: none; }
+
+        .inv-chip {
+            display: flex; flex-direction: column; align-items: center;
+            background: var(--surface);
+            border: 1px solid var(--border-mid);
+            border-radius: 12px;
+            padding: 8px 14px 7px;
+            flex-shrink: 0;
+            min-width: 72px;
+            gap: 2px;
+            transition: background 0.15s ease, border-color 0.15s ease;
+        }
+        .inv-chip__label {
+            font-size: 0.60rem; font-weight: 600;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            color: var(--txt-muted);
+            white-space: nowrap;
+        }
+        .inv-chip__icon { font-size: 1rem; line-height: 1; }
+        .inv-chip__val {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700; font-size: 1.15rem;
+            color: var(--txt-primary);
+            line-height: 1.1;
+        }
+        .inv-chip.entera  { border-color: rgba(108,99,255,0.30); }
+        .inv-chip.entera .inv-chip__val { color: #a89cff; }
+        .inv-chip.abierta { border-color: rgba(234,88,12,0.30); }
+        .inv-chip.abierta .inv-chip__val { color: #fb923c; }
+        .inv-chip.empty   { opacity: 0.38; }
+
+        .inv-card__expand-btn {
+            display: flex; align-items: center; justify-content: center; gap: 5px;
+            width: 100%;
+            padding: 9px 16px;
+            border-top: 1px solid var(--border);
+            background: transparent;
+            color: var(--accent);
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.75rem; font-weight: 600;
+            letter-spacing: 0.04em; text-transform: uppercase;
+            transition: background 0.15s ease;
+            cursor: pointer;
+            min-height: unset;
+        }
+        .inv-card__expand-btn:hover { background: rgba(108,99,255,0.07); }
+        .inv-card__expand-btn::before { display: none; } /* quitar el brillo del botón global */
+        .inv-card__expand-btn svg { transition: transform 0.25s var(--ease-spring); flex-shrink: 0; }
+        .inv-card__expand-btn.open svg { transform: rotate(180deg); }
+
+        .inv-card__extra {
+            display: none;
+            padding: 4px 16px 14px;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .inv-card__extra.open { display: flex; }
+
+        .inv-card__group-badge {
+            display: inline-flex; align-items: center;
+            font-size: 0.68rem; font-weight: 600;
+            letter-spacing: 0.04em; text-transform: uppercase;
+            color: var(--txt-muted);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 2px 8px;
+            margin-top: 1px;
+        }
+
+        @keyframes cardIn {
+            from { opacity: 0; transform: translateY(14px) scale(0.97); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .inv-card { animation: cardIn 0.28s var(--ease-out) both; }
+
+        html[data-theme="light"] .inv-card { box-shadow: 0 2px 8px rgba(0,0,0,0.09), 0 1px 3px rgba(0,0,0,0.06); }
+        html[data-theme="light"] .inv-chip  { background: #f8f7ff; }
+        html[data-theme="light"] .inv-card__expand-btn:hover { background: rgba(108,99,255,0.05); }
+        html[data-theme="light"] .inv-card__code { background: rgba(108,99,255,0.07); }
+
     </style>
 </head>
 <body class="min-h-screen transition-colors duration-300">
@@ -585,6 +826,12 @@
             </button>
         </div>
         <div id="sbFoot">
+            <button type="button" onclick="toggleTheme(); sbClose();" class="sb-item" style="width:100%;margin-bottom:6px;" id="sbThemeBtn">
+                <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                </svg>
+                <span id="sbThemeLabel">Modo claro</span>
+            </button>
             <p>Gestión profesional de barra</p>
         </div>
     </div>
@@ -599,6 +846,15 @@
                     </svg>
                 </button>
                 <h1 class="flex-1 text-base font-bold text-white truncate">BarInventory</h1>
+                <button type="button" id="themeToggleBtn" onclick="toggleTheme()" aria-label="Cambiar tema" title="Modo claro / oscuro"
+                    style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);cursor:pointer;transition:background .18s ease,transform .14s;color:#fff;flex-shrink:0;">
+                    <svg id="themeIconMoon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                    </svg>
+                    <svg id="themeIconSun" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" class="hidden">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707M17.657 17.657l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"/>
+                    </svg>
+                </button>
                 <div id="headerActions" class="flex gap-2 sm:gap-3 flex-shrink-0"></div>
             </div>
         </div>
@@ -733,15 +989,15 @@
 
     <!-- Modal Inventario -->
     <div id="inventarioModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-end md:items-center justify-center z-50 animate-fadeIn hidden" role="dialog" aria-modal="true" aria-labelledby="inventarioModalTitle">
-        <div class="bg-white rounded-t-3xl md:rounded-3xl shadow-2xl max-w-md w-full p-6 animate-slideUp max-h-[90vh] overflow-y-auto">
+        <div class="bg-white rounded-t-3xl md:rounded-3xl shadow-2xl max-w-sm w-full p-4 animate-slideUp max-h-[90vh] overflow-y-auto">
             <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-4"></div>
             <h2 class="text-xl font-bold text-gray-900 mb-1" id="inventarioModalTitle">Contar botellas</h2>
-            <p class="text-sm text-gray-500 mb-5" id="inventarioModalSubtitle"></p>
-            <div class="mb-5">
+            <p class="text-sm text-gray-500 mb-2" id="inventarioModalSubtitle"></p>
+            <div class="mb-4">
                 <label for="inv_enteras" class="block text-sm font-semibold text-gray-700 mb-2">🍾 Botellas Enteras</label>
-                <input type="number" id="inv_enteras" min="0" step="1" value="0" class="w-full px-4 py-3 bg-white text-gray-900 border-2 border-purple-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent text-center text-lg font-bold">
+                <input type="number" id="inv_enteras" min="0" step="1" value="0" class="w-full px-4 py-2 bg-white text-gray-900 border-2 border-purple-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent text-center text-lg font-bold">
             </div>
-            <div class="mb-5">
+            <div class="mb-4">
                 <div class="flex items-center justify-between mb-2">
                     <label class="block text-sm font-semibold text-gray-700">🍷 Botellas Abiertas</label>
                     <button type="button" onclick="addAbiertaInModal()" class="flex items-center gap-1 text-xs bg-gradient-to-r from-purple-500 to-blue-500 text-white px-3 py-1.5 rounded-lg hover:shadow-md transition-all active:scale-95 font-medium">
@@ -752,13 +1008,58 @@
                 <div id="inv_abiertasContainer" class="space-y-2"></div>
             </div>
             <div class="flex gap-3 pt-2">
-                <button type="button" onclick="closeInventarioModal()" class="flex-1 px-4 py-3 border-2 border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-all font-medium">Cancelar</button>
-                <button type="button" onclick="saveInventarioModal()" class="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-xl hover:shadow-lg transition-all transform active:scale-95 font-medium">Guardar</button>
+                <button type="button" onclick="closeInventarioModal()" class="flex-1 px-4 py-2 border-2 border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-all font-medium">Cancelar</button>
+                <button type="button" onclick="saveInventarioModal()" class="flex-1 px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-xl hover:shadow-lg transition-all transform active:scale-95 font-medium">Guardar</button>
             </div>
         </div>
     </div>
 
     <script>
+
+        // ==================== TEMA CLARO / OSCURO ====================
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            const isDark = theme === 'dark';
+
+            // Icono del header
+            const moonIcon = document.getElementById('themeIconMoon');
+            const sunIcon  = document.getElementById('themeIconSun');
+            if (moonIcon) moonIcon.classList.toggle('hidden', !isDark);
+            if (sunIcon)  sunIcon.classList.toggle('hidden', isDark);
+
+            // Label del sidebar
+            const sbLabel = document.getElementById('sbThemeLabel');
+            if (sbLabel) sbLabel.textContent = isDark ? 'Modo claro' : 'Modo oscuro';
+
+            // Icono del sidebar
+            const sbBtn = document.getElementById('sbThemeBtn');
+            if (sbBtn) {
+                const sbSvgPath = sbBtn.querySelector('path');
+                if (sbSvgPath) {
+                    if (isDark) {
+                        // luna
+                        sbSvgPath.setAttribute('d', 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z');
+                    } else {
+                        // sol
+                        sbSvgPath.setAttribute('d', 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707M17.657 17.657l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z');
+                    }
+                }
+            }
+
+            try { localStorage.setItem('inventarioApp_theme', theme); } catch(_) {}
+        }
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme') || 'dark';
+            applyTheme(current === 'dark' ? 'light' : 'dark');
+        }
+
+        function initTheme() {
+            let saved = 'dark';
+            try { saved = localStorage.getItem('inventarioApp_theme') || 'dark'; } catch(_) {}
+            applyTheme(saved);
+        }
+
         // ==================== FUNCIÓN DE ESCAPE PARA SEGURIDAD ====================
         function escapeHtml(unsafe) {
             if (unsafe === null || unsafe === undefined) return '';
@@ -783,6 +1084,7 @@
         let selectedGroup = 'Todos';
         let selectedArea = 'almacen';
         let expandedInventories = new Set();
+        let expandedCards = new Set(); // IDs de tarjetas de inventario expandidas
         let inventarioConteo = {}; // { productId: { area: { enteras: 0, abiertas: [] } } }
         let inventarioModalProductId = null;
         let isInventarioModalOpen = false; // Para controlar botones de área
@@ -1322,6 +1624,26 @@
             renderTab();
         }
 
+
+        // Toggle expansión de tarjeta de inventario (botellas abiertas adicionales)
+        function toggleCardExpand(productId, event) {
+            event.stopPropagation(); // no abrir el modal
+            if (expandedCards.has(productId)) {
+                expandedCards.delete(productId);
+            } else {
+                expandedCards.add(productId);
+            }
+            // Actualizar UI sin re-render completo (más eficiente)
+            const btn   = document.getElementById('card-expand-btn-' + productId);
+            const extra = document.getElementById('card-extra-' + productId);
+            if (!btn || !extra) return;
+            const isOpen = expandedCards.has(productId);
+            extra.classList.toggle('open', isOpen);
+            btn.classList.toggle('open', isOpen);
+            btn.setAttribute('aria-expanded', isOpen);
+            btn.querySelector('span').textContent = isOpen ? 'Ocultar' : 'Ver más abiertas';
+        }
+
         function renderInventarioTab() {
             const filteredProducts = filterByGroup();
             let html = '<div class="mb-4 sm:mb-6">';
@@ -1345,46 +1667,84 @@
             });
             html += '</select></div>';
 
-            const anyHasExtra = filteredProducts.some(p => {
-                const c = inventarioConteo[p.id] && inventarioConteo[p.id][selectedArea];
-                return c && c.abiertas && c.abiertas.length > 1;
-            });
+            // Hint de uso
+            html += '<p class="text-xs text-gray-400 mb-3 px-1">Toca una tarjeta para ingresar cantidades</p>';
 
-            html += '<div class="bg-white rounded-xl sm:rounded-2xl shadow-md overflow-hidden">';
-            html += '<p class="text-xs text-gray-400 px-4 pt-3 pb-1">Toca un producto para ingresar cantidades</p>';
-            html += '<div class="overflow-x-auto"><table class="w-full text-xs sm:text-base"><thead class="bg-gradient-to-r from-purple-600 to-blue-600"><tr>';
-            html += '<th class="px-2 sm:px-4 py-2 sm:py-3 text-left text-xs sm:text-sm font-semibold text-white">Descripción</th>';
-            html += '<th class="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs sm:text-sm font-semibold text-white">🍾 Entera</th>';
-            html += '<th class="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs sm:text-sm font-semibold text-white">🍷 Abierta 1</th>';
-            if (anyHasExtra) html += '<th class="px-2 sm:px-4 py-2 sm:py-3 text-center text-xs sm:text-sm font-semibold text-white">🍷+ Más</th>';
-            html += '</tr></thead><tbody class="divide-y divide-gray-200">';
+            // Lista de tarjetas Material Design
+            html += '<div class="flex flex-col gap-3">';
 
-            filteredProducts.forEach((product, idx) => {
-                const areaData = (inventarioConteo[product.id] && inventarioConteo[product.id][selectedArea]) || { enteras: 0, abiertas: [] };
-                const enteras = areaData.enteras || 0;
-                const abierta1 = (areaData.abiertas && areaData.abiertas.length > 0) ? areaData.abiertas[0] : null;
-                const extraAbiertas = (areaData.abiertas && areaData.abiertas.length > 1)
-                    ? areaData.abiertas.slice(1).map((v, i) => 'A' + (i + 2) + ': ' + v).join(' | ')
-                    : '';
+            if (filteredProducts.length === 0) {
+                html += '<div class="bg-white rounded-2xl p-10 text-center shadow-md">';
+                html += '<svg class="w-10 h-10 mx-auto mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0H4"></path></svg>';
+                html += '<p class="text-gray-500 text-sm">No hay productos en este grupo</p>';
+                html += '</div>';
+            } else {
+                filteredProducts.forEach((product, idx) => {
+                    const areaData = (inventarioConteo[product.id] && inventarioConteo[product.id][selectedArea]) || { enteras: 0, abiertas: [] };
+                    const enteras  = areaData.enteras || 0;
+                    const abiertas = areaData.abiertas || [];
+                    const abierta1 = abiertas.length > 0 ? abiertas[0] : null;
+                    const extraAbiertas = abiertas.slice(1); // botellas abiertas adicionales (2, 3, ...)
+                    const hasData  = enteras > 0 || abiertas.some(a => a > 0);
+                    const hasExtra = extraAbiertas.length > 0;
+                    const isExpanded = expandedCards.has(product.id);
+                    const delay = Math.min(idx * 35, 350);
 
-                const hasData = enteras > 0 || (areaData.abiertas && areaData.abiertas.some(a => a > 0));
-                const rowBg = hasData ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-purple-50';
-                const delay = Math.min(idx * 30, 300);
+                    html += '<div class="inv-card' + (hasData ? ' has-data' : '') + '" onclick="openInventarioModal(\'' + escapeHtml(product.id) + '\')" role="button" tabindex="0" aria-label="Contar ' + escapeHtml(product.name) + '" style="animation-delay:' + delay + 'ms">';
+                    html += '<div class="inv-card__ripple"></div>';
 
-                html += '<tr class="' + rowBg + ' transition-colors cursor-pointer active:bg-purple-100" onclick="openInventarioModal(\'' + escapeHtml(product.id) + '\')" style="animation: rowIn 0.22s ease-out both; animation-delay:' + delay + 'ms">';
-                html += '<td class="px-2 sm:px-4 py-3 font-medium text-gray-900 text-xs sm:text-sm">';
-                html += '<div>' + escapeHtml(product.name) + '</div>';
-                html += '<div class="text-xs text-gray-400">' + escapeHtml((product.group || 'General')) + '</div>';
-                html += '</td>';
-                html += '<td class="px-2 sm:px-4 py-3 text-center font-bold ' + (enteras > 0 ? 'text-purple-700' : 'text-gray-300') + ' text-sm sm:text-base">' + (enteras > 0 ? enteras : '—') + '</td>';
-                html += '<td class="px-2 sm:px-4 py-3 text-center font-semibold ' + (abierta1 !== null && abierta1 > 0 ? 'text-orange-600' : 'text-gray-300') + ' text-sm sm:text-base">' + (abierta1 !== null && abierta1 > 0 ? abierta1 : '—') + '</td>';
-                if (anyHasExtra) {
-                    html += '<td class="px-2 sm:px-4 py-3 text-center text-xs text-orange-500 font-medium">' + (extraAbiertas || '—') + '</td>';
-                }
-                html += '</tr>';
-            });
+                    // ── Fila superior: nombre + código ────────────────────
+                    html += '<div class="inv-card__header">';
+                    html += '<div style="min-width:0;flex:1">';
+                    html += '<div class="inv-card__name">' + escapeHtml(product.name) + '</div>';
+                    html += '<span class="inv-card__group-badge">' + escapeHtml(product.group || 'General') + '</span>';
+                    html += '</div>';
+                    html += '<span class="inv-card__code">' + escapeHtml(product.id) + '</span>';
+                    html += '</div>';
 
-            html += '</tbody></table></div></div>';
+                    // ── Chips de cantidad ─────────────────────────────────
+                    html += '<div class="inv-card__chips">';
+
+                    // Chip botella entera
+                    html += '<div class="inv-chip entera' + (enteras === 0 ? ' empty' : '') + '">';
+                    html += '<span class="inv-chip__val">' + (enteras > 0 ? enteras : '0') + '</span>';
+                    html += '<span class="inv-chip__label">Entera</span>';
+                    html += '</div>';
+
+                    // Chip botella abierta 1
+                    const ab1Val = abierta1 !== null ? abierta1 : 0;
+                    html += '<div class="inv-chip abierta' + (ab1Val === 0 ? ' empty' : '') + '">';
+                    html += '<span class="inv-chip__val">' + ab1Val + '</span>';
+                    html += '<span class="inv-chip__label">Abierta 1</span>';
+                    html += '</div>';
+
+                    // Chips de botellas abiertas adicionales (si están expandidas)
+                    if (hasExtra) {
+                        extraAbiertas.forEach((val, i) => {
+                            html += '<div class="inv-chip abierta' + (val === 0 ? ' empty' : '') + '" id="extra-chip-' + escapeHtml(product.id) + '-' + (i+2) + '" style="display:' + (isExpanded ? 'flex' : 'none') + ';flex-direction:column;">';
+                            html += '<span class="inv-chip__icon">🍷</span>';
+                            html += '<span class="inv-chip__val">' + val + '</span>';
+                            html += '<span class="inv-chip__label">Abierta ' + (i + 2) + '</span>';
+                            html += '</div>';
+                        });
+                    }
+
+                    html += '</div>'; // inv-card__chips
+
+                    // ── Chips adicionales expandibles ─────────────────────
+                    if (hasExtra) {
+                        html += '<button class="inv-card__expand-btn' + (isExpanded ? ' open' : '') + '" id="card-expand-btn-' + escapeHtml(product.id) + '" onclick="toggleCardExpand(\'' + escapeHtml(product.id) + '\', event)" aria-expanded="' + isExpanded + '">';
+                        html += '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>';
+                        html += '<span>' + (isExpanded ? 'Ocultar' : 'Ver más abiertas') + '</span>';
+                        html += '<span style="font-size:0.65rem;opacity:0.7;margin-left:2px">(+' + extraAbiertas.length + ')</span>';
+                        html += '</button>';
+                    }
+
+                    html += '</div>'; // inv-card
+                });
+            }
+
+            html += '</div>'; // flex flex-col gap-3
             return html;
         }
 
@@ -2176,6 +2536,9 @@
         // aquí dentro (no a nivel de script suelto) para garantizar que los elementos
         // ya existen en el DOM independientemente de dónde esté colocado el <script>.
         window.addEventListener('DOMContentLoaded', function() {
+            // --- Inicializar tema antes que todo lo demás ---
+            initTheme();
+
             // --- Listeners de archivos ---
             document.getElementById('fileInput').addEventListener('change', function(e) { window.handleFileImport(e); });
             document.getElementById('importDataInput').addEventListener('change', function(e) { window.importFullData(e); });
