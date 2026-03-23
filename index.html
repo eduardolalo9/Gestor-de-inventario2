@@ -1833,17 +1833,151 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
         }
 
         /**
+         * ══════════════════════════════════════════════════════════════════════
+         *  FUNCIONES DE FUSIÓN (MERGE) — Suma sin pérdida de datos
+         * ══════════════════════════════════════════════════════════════════════
+         *
+         * _migrateConteo(rawConteo)
+         * Convierte el formato legado plano { productId: {enteras,abiertas} }
+         * al formato por área { productId: { almacen: {...}, barra1: {...} } }.
+         */
+        function _migrateConteo(rawConteo) {
+            const migrated = {};
+            Object.keys(rawConteo || {}).forEach(prodId => {
+                const val = rawConteo[prodId];
+                if (!val || typeof val !== 'object') return;
+                if (typeof val.enteras !== 'undefined' &&
+                    val.almacen === undefined && val.barra1 === undefined && val.barra2 === undefined) {
+                    migrated[prodId] = { almacen: val };
+                } else {
+                    migrated[prodId] = val;
+                }
+            });
+            return migrated;
+        }
+
+        /**
+         * _mergeProducts(localProds, cloudProds)
+         * ────────────────────────────────────────
+         * Fusiona dos arrays de productos:
+         *  • stockByArea → SUMA área por área (nunca se pierde stock de ningún dispositivo)
+         *  • Metadatos (nombre, precio, etc.) → se conservan los del local (más reciente)
+         *  • Productos solo en local o solo en nube → se añaden tal cual
+         */
+        function _mergeProducts(localProds, cloudProds) {
+            const cloudMap = new Map((cloudProds || []).map(p => [p.id, p]));
+            const localMap = new Map((localProds || []).map(p => [p.id, p]));
+            const merged = [];
+
+            (localProds || []).forEach(lp => {
+                const cp = cloudMap.get(lp.id);
+                if (!cp) { merged.push(lp); return; } // Solo en local
+
+                // Fusionar stockByArea sumando cada área
+                const allAreas = new Set([
+                    ...Object.keys(lp.stockByArea || {}),
+                    ...Object.keys(cp.stockByArea || {})
+                ]);
+                const mergedStock = {};
+                allAreas.forEach(area => {
+                    const lv = (lp.stockByArea && typeof lp.stockByArea[area] === 'number') ? lp.stockByArea[area] : 0;
+                    const cv = (cp.stockByArea && typeof cp.stockByArea[area] === 'number') ? cp.stockByArea[area] : 0;
+                    // SUMA: combina conteos de ambos dispositivos
+                    mergedStock[area] = lv + cv;
+                });
+                // Metadatos del local (ya que es el que está a punto de sincronizar)
+                merged.push({ ...cp, ...lp, stockByArea: mergedStock });
+            });
+
+            // Añadir productos que solo están en la nube
+            (cloudProds || []).forEach(cp => {
+                if (!localMap.has(cp.id)) merged.push(cp);
+            });
+
+            return merged;
+        }
+
+        /**
+         * _mergeInventarioConteo(localConteo, cloudConteo)
+         * ──────────────────────────────────────────────────
+         * Fusiona los conteos físicos de dos dispositivos:
+         *  • enteras → SUMA (Dispositivo A contó X botellas, B contó Y → total X+Y)
+         *  • abiertas → conserva el array con más datos (el más completo)
+         *  • Metadatos de conflicto → se preservan si existen
+         */
+        function _mergeInventarioConteo(localConteo, cloudConteo) {
+            const merged = {};
+            const allProdIds = new Set([
+                ...Object.keys(localConteo || {}),
+                ...Object.keys(cloudConteo || {})
+            ]);
+
+            allProdIds.forEach(prodId => {
+                const lp = (localConteo || {})[prodId];
+                const cp = (cloudConteo || {})[prodId];
+
+                if (!lp) { merged[prodId] = cp; return; }
+                if (!cp) { merged[prodId] = lp; return; }
+
+                // Ambos dispositivos tienen datos para este producto → fusionar por área
+                const allAreas = new Set([...Object.keys(lp), ...Object.keys(cp)]);
+                const mergedProd = {};
+
+                allAreas.forEach(area => {
+                    const la = lp[area];
+                    const ca = cp[area];
+                    if (!la || typeof la !== 'object') { mergedProd[area] = ca; return; }
+                    if (!ca || typeof ca !== 'object') { mergedProd[area] = la; return; }
+
+                    // SUMA de enteras: cada dispositivo contó sus propias botellas
+                    const localEnteras = typeof la.enteras === 'number' ? la.enteras : 0;
+                    const cloudEnteras = typeof ca.enteras === 'number' ? ca.enteras : 0;
+
+                    // Para abiertas: conservar el array con más elementos (más información)
+                    const laAbiertas = Array.isArray(la.abiertas) ? la.abiertas : [];
+                    const caAbiertas = Array.isArray(ca.abiertas) ? ca.abiertas : [];
+                    const mergedAbiertas = laAbiertas.length >= caAbiertas.length ? laAbiertas : caAbiertas;
+
+                    mergedProd[area] = {
+                        ...ca, ...la,
+                        enteras: localEnteras + cloudEnteras,
+                        abiertas: mergedAbiertas
+                    };
+                });
+
+                merged[prodId] = mergedProd;
+            });
+
+            return merged;
+        }
+
+        /**
+         * _mergeArraysById(localArr, cloudArr)
+         * ──────────────────────────────────────
+         * Fusiona dos arrays (orders / inventories) sin duplicar registros.
+         * Prioriza el registro del local si hay colisión de ID.
+         */
+        function _mergeArraysById(localArr, cloudArr) {
+            const localIds = new Set((localArr || []).map(x => x.id));
+            const extra = (cloudArr || []).filter(x => !localIds.has(x.id));
+            return [...(localArr || []), ...extra];
+        }
+
+        /**
          * syncToCloud()
          * ─────────────
-         * Sube el estado actual a Firestore usando SET (merge: false).
-         * Estrategia de conflictos: "último-gana" basado en _lastModified.
-         * Solo escribe si el timestamp local es ≥ al que ya está en la nube.
+         * Sube el estado actual a Firestore.
+         * Estrategia de conflictos: MERGE POR SUMA.
+         * Si la nube tiene datos más recientes, se FUSIONAN (sumando stockByArea
+         * e inventarioConteo) antes de subir el resultado combinado.
+         * Nunca se pierde información de ningún dispositivo.
          *
          * Seguridades:
          *   • Semáforo _syncInProgress evita escrituras concurrentes
          *   • Si no hay _db o no hay conexión, marca _cloudSyncPending = true
          *     y espera al evento 'online' para reintentar
          *   • Reintentos con back-off exponencial (max 3 intentos)
+         *   • Si la nube es más reciente, FUSIONA (suma) en lugar de descartar local
          */
         async function syncToCloud(retryCount = 0) {
             if (!_db) return; // Firebase no configurado
@@ -1869,11 +2003,31 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                 if (snap.exists) {
                     const cloudTs = snap.data()._lastModified || 0;
                     if (cloudTs > localTs) {
-                        // La nube tiene datos más recientes → cargar en lugar de sobrescribir
-                        console.info('[Firebase] Nube más reciente (' + cloudTs + ' > ' + localTs + '). Descargando…');
-                        _syncInProgress = false;
-                        await _applyCloudData(snap.data());
-                        return;
+                        // ═══════════════════════════════════════════════════════════
+                        // MERGE POR SUMA — nunca se pierde información de ningún dispositivo
+                        // ═══════════════════════════════════════════════════════════
+                        // La nube tiene datos de otro dispositivo más recientes.
+                        // En lugar de descartar los datos locales, FUSIONAMOS:
+                        //  • products.stockByArea     → SUMA área por área
+                        //  • inventarioConteo.enteras → SUMA por producto/área
+                        // El resultado fusionado se sube a la nube a continuación.
+                        // ═══════════════════════════════════════════════════════════
+                        console.info('[Firebase][MERGE] Nube más reciente (' + cloudTs + ' > ' + localTs + '). Fusionando datos de ambos dispositivos…');
+                        const cloudSnap = snap.data();
+
+                        // Fusionar productos: sumar stockByArea de ambos dispositivos
+                        products = _mergeProducts(products, cloudSnap.products || []);
+
+                        // Fusionar conteo físico: sumar enteras de cada área/producto
+                        const cloudConteoMigrado = _migrateConteo(cloudSnap.inventarioConteo || {});
+                        inventarioConteo = _mergeInventarioConteo(inventarioConteo, cloudConteoMigrado);
+                        syncStockByAreaFromConteo();
+
+                        // Avanzar el timestamp al máximo para que el merge siempre gane
+                        const mergedTs = Math.max(cloudTs, localTs, Date.now());
+                        localStorage.setItem('inventarioApp_lastModified', String(mergedTs));
+                        console.info('[Firebase][MERGE] Fusión completada — subiendo estado unificado…');
+                        // ↓ Continuar hacia abajo para subir el estado fusionado
                     }
                 }
 
@@ -1893,6 +2047,8 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                 // ══════════════════════════════════════════════════════════════
 
                 // ── Preparar payload OPERATIVO (sin orders ni inventories) ─────
+                // Releer localTs por si el merge lo actualizó arriba
+                const finalTs = parseInt(localStorage.getItem('inventarioApp_lastModified') || '0', 10);
                 const payload = {
                     products:          products,
                     cart:              cart,
@@ -1901,7 +2057,7 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                     selectedArea:      selectedArea,
                     auditoriaStatus:   auditoriaStatus,
                     auditoriaConteo:   auditoriaConteo,
-                    _lastModified:     localTs,
+                    _lastModified:     finalTs,
                     _syncedAt:         Date.now(),
                     _ordersInChunks:      true,
                     _inventoriesInChunks: true
@@ -2192,9 +2348,40 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                 console.info('[Firebase] localTs=' + localTs + ' cloudTs=' + cloudTs);
 
                 if (cloudTs > localTs) {
-                    // La nube es más reciente → aplicar
-                    await _applyCloudData(cloudData);
-                    showNotification('☁️ Datos sincronizados desde la nube');
+                    // ═══════════════════════════════════════════════════════════
+                    // MERGE POR SUMA al cargar la app — preservar datos de ambos
+                    // ═══════════════════════════════════════════════════════════
+                    // Si la nube es más reciente (otro dispositivo trabajó offline),
+                    // FUSIONAMOS en lugar de reemplazar para no perder cambios locales.
+                    // ═══════════════════════════════════════════════════════════
+                    console.info('[Firebase][MERGE] Fusionando al arrancar…');
+
+                    // Leer subcolecciones de historial si aplica
+                    let cloudOrders      = cloudData.orders      || [];
+                    let cloudInventories = cloudData.inventories || [];
+                    const docRef2 = _db.collection('inventarioApp').doc(FIRESTORE_DOC_ID);
+                    if (cloudData._ordersInChunks)      cloudOrders      = await _readChunkedSubcollection(docRef2, 'ordersChunks');
+                    if (cloudData._inventoriesInChunks) cloudInventories = await _readChunkedSubcollection(docRef2, 'inventoriesChunks');
+
+                    // Fusionar: productos (sumar stockByArea)
+                    products = _mergeProducts(products, cloudData.products || []);
+
+                    // Fusionar: conteo físico (sumar enteras por área)
+                    const cloudConteoMigrado2 = _migrateConteo(cloudData.inventarioConteo || {});
+                    inventarioConteo = _mergeInventarioConteo(inventarioConteo, cloudConteoMigrado2);
+                    syncStockByAreaFromConteo();
+
+                    // Fusionar: historial sin duplicados
+                    orders      = _mergeArraysById(orders,      cloudOrders);
+                    inventories = _mergeArraysById(inventories, cloudInventories);
+
+                    // Avanzar timestamp y subir el estado fusionado
+                    const mergedTs2 = Math.max(cloudTs, localTs, Date.now());
+                    localStorage.setItem('inventarioApp_lastModified', String(mergedTs2));
+                    saveToLocalStorage();
+                    renderTab();
+                    await syncToCloud();
+                    showNotification('☁️ Datos fusionados desde todos los dispositivos ✓');
                 } else if (localTs > cloudTs) {
                     // Local es más reciente → subir
                     console.info('[Firebase] Local más reciente — subiendo…');
