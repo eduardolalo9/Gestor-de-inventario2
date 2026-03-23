@@ -3270,7 +3270,10 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
             if (inventories.length === 0) {
                 return '<div class="bg-white rounded-2xl p-12 text-center shadow-md"><svg class="w-12 h-12 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg><p class="text-gray-600">No hay inventarios guardados</p></div>';
             }
-            let html = '<div class="space-y-4">';
+            let html = '<div class="flex justify-end mb-4">';
+            html += '<button onclick="deleteAllInventories()" class="bg-gradient-to-r from-red-500 to-orange-600 text-white px-6 py-3 rounded-xl flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95 transition-all duration-200" title="Eliminar todo el historial de inventarios"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg><span class="font-medium">Eliminar historial</span></button>';
+            html += '</div>';
+            html += '<div class="space-y-4">';
             inventories.forEach((inv, idx) => {
                 const isExpanded = expandedInventories.has(inv.id);
                 const delay = Math.min(idx * 50, 400);
@@ -3651,6 +3654,17 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                 orders = [];
                 saveToLocalStorage();
                 showNotification('Todos los pedidos han sido eliminados');
+                renderTab();
+            }
+        }
+
+        function deleteAllInventories() {
+            if (inventories.length === 0) { showNotification('No hay historial de inventarios para eliminar'); return; }
+            if (confirm('¿Está seguro de que desea eliminar TODO el historial de inventarios? Esta acción no se puede deshacer.')) {
+                inventories = [];
+                expandedInventories.clear();
+                saveToLocalStorage();
+                showNotification('Historial de inventarios eliminado');
                 renderTab();
             }
         }
