@@ -108,7 +108,7 @@
         // en https://console.cloud.google.com → Credenciales → Restricciones de clave.
         // (dominio HTTP Referrer + solo Firestore API)
         const FIREBASE_CONFIG = {
-            apiKey: "REEMPLAZA_API_KEY",
+            apiKey: "AIzaSyDugu23uEgacqMUTsoBF8i7xfyDIDbiv0M",
   authDomain: "bar-inventario-1109e.firebaseapp.com",
   projectId: "bar-inventario-1109e",
   storageBucket: "bar-inventario-1109e.firebasestorage.app",
@@ -1789,19 +1789,15 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
         async function _writeChunkedSubcollection(docRef, subcollName, dataArray) {
             const MAX_CHUNK_SIZE = 80;
             const colRef = docRef.collection(subcollName);
-
-            // 1. Borrar chunks obsoletos
-            const existingSnap = await colRef.get();
-            const deleteBatch  = _db.batch();
-            existingSnap.forEach(d => deleteBatch.delete(d.ref));
-            if (!existingSnap.empty) await deleteBatch.commit();
-
-            // 2. Escribir nuevos chunks
-            const writeBatch  = _db.batch();
             const totalChunks = Math.max(1, Math.ceil(dataArray.length / MAX_CHUNK_SIZE));
+
+            // Bug #2 fix: WRITE-FIRST strategy
+            // 1. Escribir nuevos chunks con prefijo "new_" ANTES de borrar los viejos.
+            //    Si otro dispositivo lee entre estos pasos, sigue viendo los chunks "chunk_N" intactos.
+            const writeBatch = _db.batch();
             for (let i = 0; i < totalChunks; i++) {
                 const chunk    = dataArray.slice(i * MAX_CHUNK_SIZE, (i + 1) * MAX_CHUNK_SIZE);
-                const chunkRef = colRef.doc('chunk_' + i);
+                const chunkRef = colRef.doc('new_chunk_' + i);
                 writeBatch.set(chunkRef, {
                     items:       chunk,
                     chunkIndex:  i,
@@ -1810,7 +1806,25 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                 });
             }
             await writeBatch.commit();
-            console.info('[Firebase][Chunk] ' + subcollName + ' → ' + totalChunks + ' chunk(s) escritos.');
+
+            // 2. Ahora borrar chunks viejos y renombrar "new_chunk_N" → "chunk_N" en una sola pasada.
+            //    La ventana de datos vacíos queda eliminada.
+            const existingSnap = await colRef.get();
+            const cleanBatch   = _db.batch();
+            existingSnap.forEach(d => {
+                if (d.id.startsWith('new_')) {
+                    // Promover: copiar con ID definitivo y borrar el temporal
+                    const finalId = d.id.replace('new_', '');
+                    cleanBatch.set(colRef.doc(finalId), d.data());
+                    cleanBatch.delete(d.ref);
+                } else {
+                    // Borrar chunk viejo (ya fue reemplazado arriba)
+                    cleanBatch.delete(d.ref);
+                }
+            });
+            if (!existingSnap.empty) await cleanBatch.commit();
+
+            console.info('[Firebase][Chunk] ' + subcollName + ' → ' + totalChunks + ' chunk(s) escritos (write-first).');
         }
 
         /**
@@ -1901,7 +1915,7 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                 const payload = {
                     products:          products,
                     cart:              cart,
-                    inventarioConteo:  inventarioConteo,
+                    // inventarioConteo ya NO va aquí — se guarda por área en stockAreas (Bug #1 fix)
                     activeTab:         activeTab,
                     selectedArea:      selectedArea,
                     auditoriaStatus:   auditoriaStatus,
@@ -1909,13 +1923,29 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                     _lastModified:     localTs,
                     _syncedAt:         Date.now(),
                     _ordersInChunks:      true,
-                    _inventoriesInChunks: true
+                    _inventoriesInChunks: true,
+                    _conteoInSubcol:      true  // flag: inventarioConteo está en subcolección stockAreas
                 };
 
-                // Escritura paralela: doc principal + subcolecciones históricas
-                // FIX #3: se usan las funciones globales pasando docRef como argumento
+                // Construir escrituras por área (merge:true = solo toca el área modificada)
+                // Cada dispositivo escribe SOLO su área → no hay colisión entre dispositivos
+                const stockAreaRef = docRef.collection('stockAreas');
+                const areaWrites = ['almacen', 'barra1', 'barra2'].map(area => {
+                    const areaPayload = {};
+                    Object.keys(inventarioConteo).forEach(prodId => {
+                        if (inventarioConteo[prodId] && inventarioConteo[prodId][area]) {
+                            areaPayload[prodId] = inventarioConteo[prodId][area];
+                        }
+                    });
+                    areaPayload._lastModified = localTs;
+                    return stockAreaRef.doc(area).set(areaPayload, { merge: true });
+                });
+
+                // Escritura paralela: doc principal + áreas + subcolecciones históricas
+                // merge:true en docRef.set() evita sobrescribir campos de otros dispositivos
                 await Promise.all([
-                    docRef.set(payload),
+                    docRef.set(payload, { merge: true }),
+                    ...areaWrites,
                     _writeChunkedSubcollection(docRef, 'ordersChunks', orders),
                     _writeChunkedSubcollection(docRef, 'inventoriesChunks', inventories)
                 ]);
@@ -2041,11 +2071,11 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                         const localEnteras = typeof localArea.enteras === 'number' ? localArea.enteras : 0;
                         const localAbiertas = Array.isArray(localArea.abiertas) ? localArea.abiertas : [];
 
-                        // ── Enteras: acumular con el valor que ya está en la nube ──
-                        const cloudEnteras = (cloudData[p.id] && typeof cloudData[p.id].enteras === 'number')
-                            ? cloudData[p.id].enteras
-                            : 0;
-                        updatePayload[p.id + '.enteras']         = cloudEnteras + localEnteras;
+                        // ── Enteras: SET (no acumular) — Bug #4 fix ──────────────────
+                        // Cada dispositivo hace su conteo completo e independiente.
+                        // Acumular (cloudEnteras + localEnteras) duplicaba el valor en reintentos
+                        // de red o si el usuario finalizaba el área más de una vez.
+                        updatePayload[p.id + '.enteras']         = localEnteras;
                         updatePayload[p.id + '._lastWrite']      = txTimestamp; // FIX #13
                         updatePayload[p.id + '._lastWriterArea'] = area;
 
@@ -2262,7 +2292,30 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                 if (data.auditoriaConteo && typeof data.auditoriaConteo === 'object') auditoriaConteo = data.auditoriaConteo;
 
                 // Migración de formato inventarioConteo (igual que loadFromLocalStorage)
-                const rawConteo = data.inventarioConteo || {};
+                // Bug #1 fix: si _conteoInSubcol, leer cada área desde su propio subdocumento
+                let rawConteo = {};
+                if (data._conteoInSubcol && docRef) {
+                    const [snapAlmacen, snapBarra1, snapBarra2] = await Promise.all([
+                        docRef.collection('stockAreas').doc('almacen').get(),
+                        docRef.collection('stockAreas').doc('barra1').get(),
+                        docRef.collection('stockAreas').doc('barra2').get(),
+                    ]);
+                    const mergeArea = (snap, areaKey) => {
+                        if (!snap.exists) return;
+                        const areaData = snap.data();
+                        Object.keys(areaData).forEach(prodId => {
+                            if (prodId.startsWith('_')) return; // saltar metadatos
+                            if (!rawConteo[prodId]) rawConteo[prodId] = {};
+                            rawConteo[prodId][areaKey] = areaData[prodId];
+                        });
+                    };
+                    mergeArea(snapAlmacen, 'almacen');
+                    mergeArea(snapBarra1,  'barra1');
+                    mergeArea(snapBarra2,  'barra2');
+                } else {
+                    // Compatibilidad con documentos anteriores al cambio
+                    rawConteo = data.inventarioConteo || {};
+                }
                 const migrated  = {};
                 Object.keys(rawConteo).forEach(prodId => {
                     const val = rawConteo[prodId];
@@ -2589,7 +2642,9 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
         // Timer externo para el toast (evita asignar propiedades en elementos DOM)
         let toastHideTimer = null;
         function showNotification(message) {
-            if (notificationTimeout) return;
+            // Bug #9 fix: alertas críticas siempre pasan, independiente del throttle
+            const isCritical = message.startsWith('⚠️') || message.startsWith('❌');
+            if (notificationTimeout && !isCritical) return;
             const toast = document.getElementById('toast');
             const toastMessage = document.getElementById('toastMessage');
             if (!toast || !toastMessage) return;
@@ -2759,19 +2814,49 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
             return html;
         }
 
+        // Bug #11 fix: modal de confirmación propio — reemplaza confirm() nativo que
+        // puede bloquearse silenciosamente en Safari PWA y algunos navegadores en fullscreen.
+        function showConfirm(message, onConfirm) {
+            const overlay = document.createElement('div');
+            overlay.id = '_confirmOverlay';
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.15s ease-out;';
+            overlay.innerHTML =
+                '<div style="background:var(--card);border:1px solid var(--border-mid);border-radius:10px;' +
+                'padding:24px 24px 20px;max-width:360px;width:90%;box-shadow:var(--shadow-modal);">' +
+                '<p style="color:var(--txt-primary);font-family:\'IBM Plex Sans\',sans-serif;font-size:0.875rem;' +
+                'line-height:1.55;margin:0 0 20px;white-space:pre-wrap;">' + message.replace(/</g, '&lt;') + '</p>' +
+                '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
+                '<button id="_cfmCancel" style="padding:7px 18px;border:1px solid var(--border-mid);border-radius:6px;' +
+                'background:transparent;color:var(--txt-secondary);font-family:\'IBM Plex Sans\',sans-serif;' +
+                'font-size:0.8125rem;cursor:pointer;">Cancelar</button>' +
+                '<button id="_cfmOk" style="padding:7px 18px;background:var(--red);color:#fff;border:none;' +
+                'border-radius:6px;font-family:\'IBM Plex Sans\',sans-serif;font-size:0.8125rem;' +
+                'font-weight:600;cursor:pointer;">Confirmar</button>' +
+                '</div></div>';
+            document.body.appendChild(overlay);
+            const close = () => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); };
+            overlay.querySelector('#_cfmCancel').onclick = close;
+            overlay.querySelector('#_cfmOk').onclick = function() { close(); onConfirm(); };
+            // Cerrar con ESC
+            const escHandler = function(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); } };
+            document.addEventListener('keydown', escHandler);
+            // Foco automático en Cancelar (más seguro)
+            setTimeout(() => { const btn = overlay.querySelector('#_cfmCancel'); if (btn) btn.focus(); }, 30);
+        }
+
         function resetAllInventario() {
-            if (!confirm('⚠️ ¿Estás seguro de que quieres borrar TODAS las cantidades de Almacén, Barra 1 y Barra 2?\n\nEsta acción no se puede deshacer.')) return;
-            products.forEach(p => {
-                if (!p.stockByArea) p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
-                p.stockByArea.almacen = 0;
-                p.stockByArea.barra1 = 0;
-                p.stockByArea.barra2 = 0;
+            showConfirm('⚠️ ¿Estás seguro de que quieres borrar TODAS las cantidades de Almacén, Barra 1 y Barra 2?\n\nEsta acción no se puede deshacer.', function() {
+                products.forEach(p => {
+                    if (!p.stockByArea) p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
+                    p.stockByArea.almacen = 0;
+                    p.stockByArea.barra1 = 0;
+                    p.stockByArea.barra2 = 0;
+                });
+                inventarioConteo = {};
+                saveToLocalStorage();
+                showNotification('Todas las cantidades han sido borradas');
+                renderTab();
             });
-            // Vaciar inventarioConteo para que todo quede en cero
-            inventarioConteo = {};
-            saveToLocalStorage();
-            showNotification('Todas las cantidades han sido borradas');
-            renderTab();
         }
 
         function disableAreaButtons(disable) {
@@ -2891,6 +2976,12 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                 document.getElementById('inv_enteras').focus();
                 return;
             }
+            // Bug #7 fix: enteras debe ser entero — fracciones van en la sección Abiertas
+            if (!Number.isInteger(enterasRaw)) {
+                showNotification('⚠️ Las botellas enteras deben ser número entero. Usa la sección "Abiertas" para fracciones.');
+                document.getElementById('inv_enteras').focus();
+                return;
+            }
             const enteras = Math.max(0, enterasRaw);
             const container = document.getElementById('inv_abiertasContainer');
             const abiertas = [];
@@ -2966,22 +3057,22 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
             const nombreArea = areasAuditoria[area];
 
             // Confirmar finalización
-            if (!confirm('¿Finalizar conteo de ' + nombreArea + '?\n\nEsto guardará los datos del área y te regresará al panel de áreas.')) return;
+            showConfirm('¿Finalizar conteo de ' + nombreArea + '?\n\nEsto guardará los datos del área y te regresará al panel de áreas.', function() {
+                // Marcar área como completada
+                auditoriaStatus[area] = 'completada';
+                auditoriaView = 'selection';
+                auditoriaAreaActiva = null;
+                isAuditoriaMode = false;
+                saveToLocalStorage();
 
-            // Marcar área como completada
-            auditoriaStatus[area] = 'completada';
-            auditoriaView = 'selection';
-            auditoriaAreaActiva = null;
-            isAuditoriaMode = false;
-            saveToLocalStorage();
+                // ── Escritura atómica al servidor (increment + conflicto abiertas) ──
+                syncConteoAtomicoPorArea(area).catch(err =>
+                    console.warn('[Atomico] Error en sync final:', err)
+                );
 
-            // ── Escritura atómica al servidor (increment + conflicto abiertas) ──
-            syncConteoAtomicoPorArea(area).catch(err =>
-                console.warn('[Atomico] Error en sync final:', err)
-            );
-
-            showNotification('✅ Conteo de ' + nombreArea + ' guardado');
-            renderTab();
+                showNotification('✅ Conteo de ' + nombreArea + ' guardado');
+                renderTab();
+            });
         }
 
         function auditoriaVolverSeleccion() {
@@ -3001,19 +3092,20 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
         }
 
         function auditoriaResetear() {
-            if (!confirm('⚠️ ¿Iniciar nueva auditoría?\n\nSe borrarán todos los conteos actuales de las tres áreas y se comenzará desde cero.')) return;
-            auditoriaStatus   = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
-            auditoriaConteo   = {};
-            auditoriaView     = 'selection';
-            auditoriaAreaActiva = null;
-            isAuditoriaMode   = false;
-            saveToLocalStorage();
-            // Limpiar también los documentos atómicos en Firestore (para que increment() parta de 0)
-            resetConteoAtomicoEnFirestore().catch(err =>
-                console.warn('[Atomico] No se pudo limpiar Firestore en reset:', err)
-            );
-            showNotification('Nueva auditoría iniciada');
-            renderTab();
+            showConfirm('⚠️ ¿Iniciar nueva auditoría?\n\nSe borrarán todos los conteos actuales de las tres áreas y se comenzará desde cero.', function() {
+                auditoriaStatus   = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
+                auditoriaConteo   = {};
+                auditoriaView     = 'selection';
+                auditoriaAreaActiva = null;
+                isAuditoriaMode   = false;
+                saveToLocalStorage();
+                // Limpiar también los documentos atómicos en Firestore (para que increment() parta de 0)
+                resetConteoAtomicoEnFirestore().catch(err =>
+                    console.warn('[Atomico] No se pudo limpiar Firestore en reset:', err)
+                );
+                showNotification('Nueva auditoría iniciada');
+                renderTab();
+            });
         }
 
         /**
@@ -3324,15 +3416,23 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
         function downloadInventory(invId) {
             const inv = inventories.find(i => i.id === invId);
             if (!inv) return;
-            const headers = ['Producto', 'Stock (Enteras)', 'Abiertas', 'Unidad', 'Grupo'];
-            const rows = inv.products.map(p => [p.name || '', p.stock || 0, (p.abiertas || []).join(' + '), p.unit || '', p.group || 'General']);
+            // Bug #10 fix: cada botella abierta en su propia columna (igual que exportToExcel)
+            const maxAb = Math.max(1, ...inv.products.map(p => (p.abiertas || []).length));
+            const abHeaders = Array.from({ length: maxAb }, (_, i) => 'Abierta ' + (i + 1) + ' (oz)');
+            const headers = ['Producto', 'Stock (Enteras)', ...abHeaders, 'Unidad', 'Grupo'];
+            const rows = inv.products.map(p => {
+                const ab = p.abiertas || [];
+                const abCells = Array.from({ length: maxAb }, (_, i) =>
+                    i < ab.length ? (ab[i] != null ? Number(ab[i]).toFixed(2) : '0.00') : '');
+                return [p.name || '', p.stock || 0, ...abCells, p.unit || '', p.group || 'General'];
+            });
             const csvEscape = v => { const s = String(v == null ? '' : v); return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s; };
             const csv = [headers].concat(rows).map(row => row.map(csvEscape).join(',')).join('\n');
             const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const safeDate = (inv.date || '').replace(/[/:,\s]/g, '-').replace(/-+/g, '-').replace(/-$/, '');  // BUG-FIX M2
+            const safeDate = (inv.date || '').replace(/[/:,\s]/g, '-').replace(/-+/g, '-').replace(/-$/, '');
             a.download = inv.id + '_' + safeDate + '.csv';
             document.body.appendChild(a);
             a.click();
@@ -3451,6 +3551,17 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
             const capacidadMl       = isNaN(capacidadMlRaw) || capacidadMlRaw <= 0 ? undefined : capacidadMlRaw;
             const pesoBotellaLlenaOz = isNaN(pesoLlenaOzRaw) || pesoLlenaOzRaw <= 0 ? undefined : pesoLlenaOzRaw;
 
+            // Bug #6 fix: validar coherencia física antes de guardar
+            // pesoVidrio = pesoLleno - liquidoOz; si es negativo el usuario invirtió los campos
+            if (capacidadMl !== undefined && pesoBotellaLlenaOz !== undefined) {
+                const liquidoOz  = capacidadMl / 29.5735;
+                const pesoVidrio = pesoBotellaLlenaOz - liquidoOz;
+                if (pesoVidrio < 0) {
+                    showNotification('⚠️ Error: el peso de botella llena (' + pesoBotellaLlenaOz + ' oz) es menor que el líquido (' + liquidoOz.toFixed(2) + ' oz). ¿Invertiste los campos?');
+                    return;
+                }
+            }
+
             if (editingProductId) {
                 const product = products.find(p => p.id === editingProductId);
                 if (product) {
@@ -3495,19 +3606,20 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
         function editProduct(id) { openProductModal(id); }
 
         function deleteProduct(id) {
-            if (confirm('¿Está seguro de eliminar este producto?')) {
+            showConfirm('¿Está seguro de eliminar este producto?', function() {
                 products = products.filter(p => p.id !== id);
                 cart = cart.filter(item => item.id !== id);
                 delete inventarioConteo[id];
+                delete auditoriaConteo[id];  // Bug #5 fix: evitar entradas huérfanas que rompen exportToExcel
                 saveToLocalStorage();
                 showNotification('Producto eliminado');
                 renderTab();
-            }
+            });
         }
 
         function deleteAllProducts() {
             if (products.length === 0) { showNotification('No hay productos para eliminar'); return; }
-            if (confirm('¿Está seguro de que desea eliminar TODOS los productos? Esta acción no se puede deshacer.')) {
+            showConfirm('¿Está seguro de que desea eliminar TODOS los productos? Esta acción no se puede deshacer.', function() {
                 products = []; cart = []; inventarioConteo = {};
                 // CORRECCIÓN BUG 2: los pedidos son registros históricos inmutables.
                 // Solo se vacía el carrito activo; los productos de pedidos ya creados
@@ -3515,7 +3627,7 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                 saveToLocalStorage();
                 showNotification('Todos los productos han sido eliminados');
                 renderTab();
-            }
+            });
         }
 
         function filterByGroup() {
@@ -3645,33 +3757,33 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
         }
 
         function deleteOrder(orderId) {
-            if (confirm('¿Está seguro de eliminar este pedido?')) {
+            showConfirm('¿Está seguro de eliminar este pedido?', function() {
                 orders = orders.filter(o => o.id !== orderId);
                 saveToLocalStorage();
                 showNotification('Pedido eliminado');
                 renderTab();
-            }
+            });
         }
 
         function deleteAllOrders() {
             if (orders.length === 0) { showNotification('No hay pedidos para eliminar'); return; }
-            if (confirm('¿Está seguro de que desea eliminar TODOS los pedidos? Esta acción no se puede deshacer.')) {
+            showConfirm('¿Está seguro de que desea eliminar TODOS los pedidos? Esta acción no se puede deshacer.', function() {
                 orders = [];
                 saveToLocalStorage();
                 showNotification('Todos los pedidos han sido eliminados');
                 renderTab();
-            }
+            });
         }
 
         function deleteAllInventories() {
             if (inventories.length === 0) { showNotification('No hay historial de inventarios para eliminar'); return; }
-            if (confirm('¿Está seguro de que desea eliminar TODO el historial de inventarios? Esta acción no se puede deshacer.')) {
+            showConfirm('¿Está seguro de que desea eliminar TODO el historial de inventarios? Esta acción no se puede deshacer.', function() {
                 inventories = [];
                 expandedInventories.clear();
                 saveToLocalStorage();
                 showNotification('Historial de inventarios eliminado');
                 renderTab();
-            }
+            });
         }
 
         function shareOrderWhatsApp(orderId) {
@@ -4022,15 +4134,16 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                     const { cells, totalGeneral } = buildRow(p);
                     wsRows.push({ type: 'data', even: even % 2 === 0, data: cells });
                     // Acumular numéricos (excluye fixed y estado)
+                    // Bug #8 fix: redondeo intermedio a 4 decimales para cortar propagación IEEE-754
                     for (let ci = FIXED_COLS; ci < TOTAL_GENERAL_COL; ci++) {
                         const v = cells[ci];
                         if (typeof v === 'number') {
-                            groupNums[ci - FIXED_COLS] += v;
-                            grandNums[ci - FIXED_COLS] += v;
+                            groupNums[ci - FIXED_COLS] = parseFloat((groupNums[ci - FIXED_COLS] + v).toFixed(4));
+                            grandNums[ci - FIXED_COLS] = parseFloat((grandNums[ci - FIXED_COLS] + v).toFixed(4));
                         }
                     }
-                    groupTotal += totalGeneral;
-                    grandTotal += totalGeneral;
+                    groupTotal = parseFloat((groupTotal + totalGeneral).toFixed(4));
+                    grandTotal = parseFloat((grandTotal + totalGeneral).toFixed(4));
                     even++;
                 });
 
@@ -4180,6 +4293,10 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                 inventories,
                 cart,
                 inventarioConteo,
+                auditoriaConteo,         // Bug #3 fix: incluir conteo de auditoría
+                auditoriaStatus,         // Bug #3 fix: incluir estado por área
+                auditoriaView,           // Bug #3 fix: incluir vista activa
+                auditoriaAreaActiva,     // Bug #3 fix: incluir área activa
                 activeTab,
                 searchTerm,
                 selectedGroup,
@@ -4211,7 +4328,7 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                         showNotification('El archivo no tiene el formato correcto');
                         return;
                     }
-                    if (confirm('¿Estás seguro de reemplazar todos los datos actuales con los del archivo?')) {
+                    showConfirm('¿Estás seguro de reemplazar todos los datos actuales con los del archivo?', function() {
                         products = data.products;
                         orders = data.orders;
                         inventories = data.inventories;
@@ -4236,6 +4353,15 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                         // FIX 1 — reconstruir stockByArea después de importar
                         syncStockByAreaFromConteo();
 
+                        // Bug #3 fix: restaurar campos de auditoría si existen en el backup
+                        if (data.auditoriaConteo && typeof data.auditoriaConteo === 'object')
+                            auditoriaConteo = data.auditoriaConteo;
+                        if (data.auditoriaStatus && typeof data.auditoriaStatus === 'object')
+                            auditoriaStatus = data.auditoriaStatus;
+                        auditoriaView       = data.auditoriaView       || 'selection';
+                        auditoriaAreaActiva = data.auditoriaAreaActiva || null;
+                        isAuditoriaMode     = (auditoriaView === 'counting' && !!auditoriaAreaActiva);
+
                         activeTab = data.activeTab || 'inicio';
                         searchTerm = data.searchTerm || '';
                         selectedGroup = data.selectedGroup || 'Todos';
@@ -4245,7 +4371,7 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                         saveToLocalStorage();
                         switchTab(activeTab);
                         showNotification('Datos importados correctamente');
-                    }
+                    });
                 } catch (error) {
                     showNotification('Error al leer el archivo: ' + error.message);
                     console.error(error);
