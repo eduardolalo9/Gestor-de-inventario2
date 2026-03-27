@@ -92,6 +92,7 @@
          ══════════════════════════════════════════════════════════ -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 
     <!-- ══════════════════════════════════════════════════════════
          CONFIGURACIÓN FIREBASE
@@ -121,7 +122,8 @@
         const FIRESTORE_DOC_ID = "barra-principal";
 
         // ─── Inicializar Firebase solo si la config es válida ───
-        let _db = null;
+        let _db   = null;
+        let _auth = null;
         (function initFirebase() {
             const configured = Object.values(FIREBASE_CONFIG).every(v => !v.startsWith("REEMPLAZA"));
             if (!configured) {
@@ -130,7 +132,8 @@
             }
             try {
                 firebase.initializeApp(FIREBASE_CONFIG);
-                _db = firebase.firestore();
+                _db   = firebase.firestore();
+                _auth = firebase.auth();
                 // Persistencia offline nativa de Firestore (caché local automático)
                 _db.enablePersistence({ synchronizeTabs: true }).catch(err => {
                     if (err.code === 'failed-precondition') {
@@ -1194,9 +1197,240 @@ html[data-theme="light"] .audit-count-area-badge { background: rgba(29,78,216,0.
     margin-top: 3px;
 }
 html[data-theme="light"] #syncDot::after { background: #1e293b; }
+
+/* ══════════════════════════════════════════════════════════
+   AUTH — Pantalla de inicio de sesión
+   ══════════════════════════════════════════════════════════ */
+#loginScreen {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999;
+    padding: 16px;
+    animation: fadeIn 0.22s var(--ease-out) both;
+}
+#loginScreen.auth-hidden { display: none !important; }
+
+.login-card {
+    background: var(--surface);
+    border: 1px solid var(--border-mid);
+    border-radius: var(--r-xl);
+    box-shadow: var(--shadow-modal);
+    width: 100%; max-width: 380px;
+    padding: 36px 32px 32px;
+    animation: springUp 0.28s var(--ease-out) both;
+}
+.login-logo {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 28px;
+}
+.login-logo-icon {
+    width: 38px; height: 38px;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent-dim2);
+    border-radius: var(--r-lg);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.25rem;
+    flex-shrink: 0;
+}
+.login-logo-text {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 700; font-size: 1rem;
+    letter-spacing: 0.03em;
+    color: var(--txt-primary);
+}
+.login-logo-sub {
+    font-size: 0.7rem; font-weight: 400;
+    color: var(--txt-muted);
+    letter-spacing: 0.02em;
+    margin-top: 1px;
+}
+.login-title {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 600; font-size: 1.05rem;
+    color: var(--txt-primary);
+    margin-bottom: 6px;
+}
+.login-subtitle {
+    font-size: 0.775rem; color: var(--txt-secondary);
+    margin-bottom: 24px; line-height: 1.5;
+}
+.login-field { margin-bottom: 14px; }
+.login-label {
+    display: block;
+    font-size: 0.725rem; font-weight: 600;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--txt-secondary);
+    margin-bottom: 6px;
+}
+.login-input {
+    width: 100%; padding: 10px 12px;
+    background: var(--card);
+    border: 1px solid var(--border-mid);
+    border-radius: var(--r-md);
+    color: var(--txt-primary);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.875rem;
+    outline: none;
+    transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.login-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.login-input::placeholder { color: var(--txt-muted); }
+.login-btn {
+    width: 100%; padding: 11px 16px;
+    background: var(--accent);
+    border: 1px solid var(--accent-hover);
+    border-radius: var(--r-md);
+    color: #ffffff;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 600; font-size: 0.875rem;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: background 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+    box-shadow: 0 2px 10px rgba(59,130,246,0.25);
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.login-btn:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 4px 16px rgba(59,130,246,0.35); }
+.login-btn:active:not(:disabled) { transform: scale(0.985); }
+.login-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.login-error {
+    margin-top: 12px; padding: 9px 12px;
+    background: var(--red-dim);
+    border: 1px solid rgba(239,68,68,0.28);
+    border-radius: var(--r-md);
+    color: var(--red-text);
+    font-size: 0.775rem; font-weight: 500;
+    display: none;
+    animation: fadeIn 0.16s ease both;
+}
+.login-error.visible { display: block; }
+.login-divider {
+    height: 1px; background: var(--border);
+    margin: 20px 0;
+}
+.login-footer {
+    text-align: center;
+    font-size: 0.68rem; color: var(--txt-muted);
+}
+
+/* Spinner para el botón de login */
+@keyframes spin { to { transform: rotate(360deg); } }
+.login-spinner {
+    width: 15px; height: 15px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+
+/* Loading auth — pantalla intermedia */
+#authLoadingScreen {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9998;
+    flex-direction: column; gap: 14px;
+}
+#authLoadingScreen.auth-hidden { display: none !important; }
+.auth-loading-spinner {
+    width: 32px; height: 32px;
+    border: 3px solid var(--border-mid);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+}
+.auth-loading-text {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.8rem; color: var(--txt-muted);
+    font-weight: 500;
+}
+
+/* App oculta por defecto hasta confirmar auth */
+#appWrapper { display: none; }
+#appWrapper.auth-visible { display: block; }
+
+/* Botón Cerrar Sesión en sidebar */
+.sb-logout-btn {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 7px 10px;
+    border-radius: var(--r-md);
+    border: 1px solid rgba(239,68,68,0.22);
+    background: rgba(239,68,68,0.06);
+    color: var(--red-text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.78rem; font-weight: 500;
+    cursor: pointer;
+    margin-top: 6px;
+    transition: background 0.12s ease, border-color 0.12s ease;
+    text-align: left;
+}
+.sb-logout-btn:hover {
+    background: rgba(239,68,68,0.13);
+    border-color: rgba(239,68,68,0.40);
+}
+.sb-logout-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
+#sbUserEmail {
+    font-size: 0.67rem; color: var(--txt-muted);
+    padding: 0 10px 6px;
+    overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; display: block;
+}
 </style>
 </head>
 <body class="min-h-screen">
+
+    <!-- ══════════════════════════════════════════════════════
+         AUTH — Pantalla de carga mientras Firebase verifica sesión
+         ══════════════════════════════════════════════════════ -->
+    <div id="authLoadingScreen">
+        <div class="auth-loading-spinner"></div>
+        <span class="auth-loading-text">Verificando sesión…</span>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         AUTH — Pantalla de Login
+         ══════════════════════════════════════════════════════ -->
+    <div id="loginScreen" class="auth-hidden">
+        <div class="login-card">
+            <div class="login-logo">
+                <div class="login-logo-icon">📦</div>
+                <div>
+                    <div class="login-logo-text">BarInventory</div>
+                    <div class="login-logo-sub">Control de Inventario</div>
+                </div>
+            </div>
+            <p class="login-title">Bienvenido de vuelta</p>
+            <p class="login-subtitle">Ingresa tus credenciales para acceder al sistema de inventario.</p>
+
+            <div class="login-field">
+                <label class="login-label" for="loginEmail">Correo electrónico</label>
+                <input type="email" id="loginEmail" class="login-input" placeholder="tu@correo.com" autocomplete="email">
+            </div>
+            <div class="login-field">
+                <label class="login-label" for="loginPassword">Contraseña</label>
+                <input type="password" id="loginPassword" class="login-input" placeholder="••••••••" autocomplete="current-password">
+            </div>
+
+            <div id="loginError" class="login-error"></div>
+
+            <button type="button" id="loginBtn" class="login-btn" onclick="handleLogin()">
+                <span id="loginBtnText">Iniciar sesión</span>
+            </button>
+
+            <div class="login-divider"></div>
+            <p class="login-footer">Sistema privado — acceso restringido al personal autorizado.</p>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         APP WRAPPER — Solo visible si el usuario está logueado
+         ══════════════════════════════════════════════════════ -->
+    <div id="appWrapper">
     <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden">
     <!-- Input oculto para importar respaldo JSON -->
     <input type="file" id="importDataInput" accept=".json" class="hidden">
@@ -1271,6 +1505,8 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
             </button>
         </div>
         <div id="sbFoot">
+            <!-- Email del usuario autenticado -->
+            <span id="sbUserEmail"></span>
             <!-- Badge de estado de sincronización con la nube -->
             <div id="cloudSyncBadge"
                  style="display:flex;align-items:center;justify-content:center;
@@ -1286,6 +1522,13 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
                 </svg>
                 <span id="sbThemeLabel">Modo claro</span>
+            </button>
+            <!-- Cerrar sesión -->
+            <button type="button" class="sb-logout-btn" onclick="signOutUser()" aria-label="Cerrar sesión">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                </svg>
+                Cerrar sesión
             </button>
             <p>Gestión profesional de barra</p>
         </div>
@@ -4433,6 +4676,136 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
             }
             setInterval(smartAutoSave, 30000);
         });
+    </script>
+
+    </div><!-- /#appWrapper -->
+
+    <!-- ══════════════════════════════════════════════════════
+         AUTH — Lógica de autenticación Firebase
+         ══════════════════════════════════════════════════════ -->
+    <script>
+    (function() {
+        'use strict';
+
+        /* ── Helpers DOM ─────────────────────────────────────────── */
+        const $id  = id => document.getElementById(id);
+        const loginScreen       = $id('loginScreen');
+        const authLoadingScreen = $id('authLoadingScreen');
+        const appWrapper        = $id('appWrapper');
+
+        /* ── Mostrar/Ocultar pantallas ───────────────────────────── */
+        function showLogin() {
+            authLoadingScreen.classList.add('auth-hidden');
+            loginScreen.classList.remove('auth-hidden');
+            appWrapper.classList.remove('auth-visible');
+        }
+
+        function showApp(user) {
+            authLoadingScreen.classList.add('auth-hidden');
+            loginScreen.classList.add('auth-hidden');
+            appWrapper.classList.add('auth-visible');
+            // Actualizar email visible en el sidebar
+            const emailEl = $id('sbUserEmail');
+            if (emailEl && user) emailEl.textContent = user.email;
+        }
+
+        /* ── onAuthStateChanged — persistencia de sesión ─────────── */
+        if (_auth) {
+            _auth.onAuthStateChanged(function(user) {
+                if (user) {
+                    console.info('[Auth] Usuario autenticado:', user.email);
+                    showApp(user);
+                } else {
+                    console.info('[Auth] Sin sesión — mostrando login.');
+                    showLogin();
+                }
+            });
+        } else {
+            // Firebase no configurado: mostrar login de aviso o directamente la app
+            // (Fallback de desarrollo: sin Firebase, muestra la app igualmente)
+            console.warn('[Auth] Firebase Auth no disponible — mostrando app sin autenticación.');
+            authLoadingScreen.classList.add('auth-hidden');
+            appWrapper.classList.add('auth-visible');
+        }
+
+        /* ── Manejo del formulario de login ──────────────────────── */
+        window.handleLogin = async function() {
+            if (!_auth) {
+                showNotification('⚙️ Firebase no está configurado.');
+                return;
+            }
+            const email    = ($id('loginEmail').value   || '').trim();
+            const password = ($id('loginPassword').value || '').trim();
+            const errEl    = $id('loginError');
+            const btn      = $id('loginBtn');
+            const btnText  = $id('loginBtnText');
+
+            // Validaciones básicas
+            errEl.classList.remove('visible');
+            if (!email || !password) {
+                errEl.textContent = 'Por favor ingresa tu correo y contraseña.';
+                errEl.classList.add('visible');
+                return;
+            }
+
+            // Estado de carga en el botón
+            btn.disabled = true;
+            btnText.textContent = 'Iniciando sesión…';
+            btn.insertAdjacentHTML('beforeend', '<span class="login-spinner"></span>');
+
+            try {
+                await _auth.signInWithEmailAndPassword(email, password);
+                // onAuthStateChanged se encarga de mostrar la app automáticamente
+            } catch (err) {
+                console.warn('[Auth] Error al iniciar sesión:', err.code);
+                const msgs = {
+                    'auth/user-not-found':      'No existe una cuenta con ese correo.',
+                    'auth/wrong-password':      'Contraseña incorrecta. Inténtalo de nuevo.',
+                    'auth/invalid-email':       'El formato del correo no es válido.',
+                    'auth/too-many-requests':   'Demasiados intentos. Espera unos minutos.',
+                    'auth/network-request-failed': 'Sin conexión. Verifica tu internet.',
+                    'auth/invalid-credential':  'Correo o contraseña incorrectos.',
+                };
+                errEl.textContent = msgs[err.code] || ('Error: ' + (err.message || err.code));
+                errEl.classList.add('visible');
+            } finally {
+                btn.disabled = false;
+                btnText.textContent = 'Iniciar sesión';
+                const spinner = btn.querySelector('.login-spinner');
+                if (spinner) spinner.remove();
+            }
+        };
+
+        /* ── Cerrar sesión ───────────────────────────────────────── */
+        window.signOutUser = async function() {
+            if (!_auth) return;
+            try {
+                sbClose();
+                await _auth.signOut();
+                // onAuthStateChanged limpiará la UI automáticamente
+                showNotification('👋 Sesión cerrada correctamente.');
+            } catch (err) {
+                console.error('[Auth] Error al cerrar sesión:', err);
+                showNotification('❌ Error al cerrar sesión.');
+            }
+        };
+
+        /* ── Enter en los campos del login ───────────────────────── */
+        document.addEventListener('DOMContentLoaded', function() {
+            const emailInput    = $id('loginEmail');
+            const passwordInput = $id('loginPassword');
+            if (emailInput) {
+                emailInput.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') { e.preventDefault(); $id('loginPassword').focus(); }
+                });
+            }
+            if (passwordInput) {
+                passwordInput.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') { e.preventDefault(); window.handleLogin(); }
+                });
+            }
+        });
+    })();
     </script>
 </body>
 </html>
