@@ -4,7 +4,7 @@
  * auditoría física ciega y exportación/importación Excel/JSON.
  */
 import { state }                from './state.js';
-import { AREAS, AREAS_AUDITORIA, AREA_KEYS, ML_POR_OZ, INTEGER_UNITS, AUDIT_TOLERANCE } from './constants.js';
+import { AREAS, AREAS_AUDITORIA, AREA_KEYS, ML_POR_OZ, INTEGER_UNITS } from './constants.js';
 import { showNotification, showConfirm, escapeHtml, updateHeaderActions } from './ui.js';
 import { saveToLocalStorage }   from './storage.js';
 
@@ -15,6 +15,8 @@ import { saveToLocalStorage }   from './storage.js';
  * puntos       = liquidoActual / liquidoOz   (0–1)
  */
 export function convertirOzAPuntos(pesoActualOz, capacidadMl, pesoBotellaLlenaOz) {
+    // FIX BUG-5: guard contra divisón por cero si capacidadMl fuera 0
+    if (!capacidadMl || capacidadMl <= 0) return 0;
     const liquidoOz       = capacidadMl / ML_POR_OZ;
     const pesoVidrio      = pesoBotellaLlenaOz - liquidoOz;
     const liquidoActualOz = pesoActualOz - pesoVidrio;
@@ -173,6 +175,7 @@ export function deleteProduct(id) {
         state.cart = state.cart.filter(item => item.id !== id);
         delete state.inventarioConteo[id];
         delete state.auditoriaConteo[id];
+        delete state.auditoriaConteoPorUsuario[id]; // FIX BUG-8: evitar datos huérfanos multiusuario
         saveToLocalStorage();
         showNotification('Producto eliminado');
         import('./render.js').then(m => m.renderTab());
@@ -183,6 +186,8 @@ export function deleteAllProducts() {
     if (state.products.length === 0) { showNotification('No hay productos para eliminar'); return; }
     showConfirm('¿Eliminar TODOS los productos? Esta acción no se puede deshacer.', () => {
         state.products = []; state.cart = []; state.inventarioConteo = {};
+        state.auditoriaConteo = {}; // FIX BUG-9: limpiar datos de auditoría
+        state.auditoriaConteoPorUsuario = {};
         saveToLocalStorage();
         showNotification('Todos los productos han sido eliminados');
         import('./render.js').then(m => m.renderTab());
@@ -401,7 +406,13 @@ export function saveInventarioModal() {
     if (state.isAuditoriaMode && state.auditoriaAreaActiva) {
         if (!state.auditoriaConteo[state.inventarioModalProductId]) state.auditoriaConteo[state.inventarioModalProductId] = {};
         state.auditoriaConteo[state.inventarioModalProductId][state.auditoriaAreaActiva] = { enteras, abiertas };
-        const cuUser = state.auditCurrentUser || { userId: 'local-' + Date.now(), userName: 'Local' };
+        // FIX BUG-10: userId estable — si auditCurrentUser es null, usar ID fijo de sesión
+        if (!state.auditCurrentUser) {
+            const sessionId = sessionStorage.getItem('_anonUserId') || ('anon-' + Math.random().toString(36).substr(2, 9));
+            sessionStorage.setItem('_anonUserId', sessionId);
+            state.auditCurrentUser = { userId: sessionId, userName: 'Local' };
+        }
+        const cuUser = state.auditCurrentUser;
         if (!state.auditoriaConteoPorUsuario[state.inventarioModalProductId]) state.auditoriaConteoPorUsuario[state.inventarioModalProductId] = {};
         if (!state.auditoriaConteoPorUsuario[state.inventarioModalProductId][state.auditoriaAreaActiva]) state.auditoriaConteoPorUsuario[state.inventarioModalProductId][state.auditoriaAreaActiva] = {};
         state.auditoriaConteoPorUsuario[state.inventarioModalProductId][state.auditoriaAreaActiva][cuUser.userId] = { userId: cuUser.userId, userName: cuUser.userName, enteras, abiertas: abiertas.slice(), ts: Date.now() };
@@ -572,7 +583,6 @@ export function handleFileImport(event) {
 export function exportToExcel(modo) {
     if (!Array.isArray(state.products) || state.products.length === 0) { showNotification('⚠️ No hay productos para exportar'); return; }
     const areaNames = modo==='AUDITORIA' ? { almacen:'Almacén', barra1:'Barra Restaurante', barra2:'Barra Bar' } : { almacen:'Almacén', barra1:'Barra1', barra2:'Barra2' };
-    const areaColor = { almacen:'7C3AED', barra1:'2563EB', barra2:'EA580C' };
     const maxAbiertas = { almacen: 1, barra1: 1, barra2: 1 };
     state.products.forEach(p => { AREA_KEYS.forEach(area => { const d = state.inventarioConteo[p.id]&&state.inventarioConteo[p.id][area]; if (d&&d.abiertas&&d.abiertas.length>maxAbiertas[area]) maxAbiertas[area]=d.abiertas.length; }); });
     const headerRow = []; const colMeta = [];

@@ -21,8 +21,8 @@ let _toastHideTimer      = null;
 let _searchDebounceTimer = null;
 
 // ── Advertencia cuota localStorage (solo una vez por sesión) ──
-export let _lsQuotaWarned = false;
-export function setLsQuotaWarned(v) { _lsQuotaWarned = v; }
+// FIX BUG-13: eliminadas las exports _lsQuotaWarned / setLsQuotaWarned
+// (nunca se importaban; storage.js usa su propio _quotaWarned local)
 
 // ═════════════════════════════════════════════════════════════
 //  SEGURIDAD — escape HTML

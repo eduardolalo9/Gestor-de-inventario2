@@ -40,6 +40,12 @@ export function renderTab() {
         case 'pedidos':     content.innerHTML = renderPedidosTab();     break;
         case 'inventario':  content.innerHTML = renderInventarioTab();  break;
         case 'historia':    content.innerHTML = renderHistoriaTab();    break;
+        // FIX BUG-12: default evita contenido vacío si activeTab tiene valor inválido
+        default:
+            console.warn('[Render] Tab desconocido:', state.activeTab, '— mostrando inicio.');
+            state.activeTab = 'inicio';
+            content.innerHTML = renderInicioTab();
+            break;
     }
 
     requestAnimationFrame(() => {
