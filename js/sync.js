@@ -3,39 +3,56 @@
  * ══════════════════════════════════════════════════════════════
  * Sincronización bidireccional en tiempo real con Firebase Firestore.
  *
- * ARQUITECTURA DE LISTENERS (10 onSnapshot activos cuando el
- * usuario está autenticado):
- *
- *   [1]   inventarioApp/{DOC_ID}            → productos, carrito,
- *                                             estado auditoría, pedidos
- *   [2-4] inventarioApp/{DOC_ID}/stockAreas/{area} x3
- *                                           → conteo operativo por área
- *   [5-7] inventarioApp/{DOC_ID}/conteoAreas/{area} x3
- *                                           → conteo de auditoría ciega
+ * ─── ARQUITECTURA DE LISTENERS (10 onSnapshot activos) ───────
+ *   [1]    inventarioApp/{DOC_ID}                  → doc principal
+ *   [2-4]  inventarioApp/{DOC_ID}/stockAreas/{area} x3
+ *   [5-7]  inventarioApp/{DOC_ID}/conteoAreas/{area} x3
  *   [8-10] inventarioApp/{DOC_ID}/conteoPorUsuario/{area} x3
- *                                           → conteos multiusuario
  *
- * MECANISMO ANTI-BUCLE (dos capas):
- *   Capa 1 — Firebase metadata.hasPendingWrites:
- *     true  → snapshot causado por escritura LOCAL aún no confirmada
- *             por el servidor → ignorar siempre (optimistic echo)
- *   Capa 2 — comparación de timestamp _lastModified:
- *     si el timestamp del snapshot ≤ estado local → ya tenemos
- *     esos datos (o más nuevos) → ignorar
+ * ─── GARANTÍAS TRANSACCIONALES (runTransaction) ──────────────
  *
- * CICLO DE VIDA:
- *   startRealtimeListeners()  — llamado por auth.js al confirmar login
- *   stopRealtimeListeners()   — llamado por auth.js al cerrar sesión
+ *   [T1] txCloseZone(area)
+ *        Cierra una zona de auditoría de forma atómica.
+ *        Usa update() con dot-notation ('auditoriaStatus.almacen')
+ *        para NO sobreescribir el estado de otras zonas.
+ *        Idempotente: si la zona ya estaba cerrada, no reescribe.
+ *        → Corrige RC-1 y RC-5
  *
- * API pública:
- *   startRealtimeListeners()
- *   stopRealtimeListeners()
- *   syncToCloud(retryCount?)
- *   syncConteoAtomicoPorArea(area)
- *   syncConteoPorUsuarioToFirestore(area)
- *   resetConteoAtomicoEnFirestore()
- *   updateCloudSyncBadge(status)
- *   updateNetworkStatus()
+ *   [T2] txSyncStockArea(docRef, area, localTs) [privada]
+ *        Fusiona el conteo operativo de un área producto por producto.
+ *        Lee el doc actual, aplica solo los productos que este
+ *        dispositivo tiene datos, preserva el resto.
+ *        → Corrige RC-2 para stockAreas
+ *
+ *   [T3] syncConteoAtomicoPorArea(area) [mejorada]
+ *        Rastrea las enteras por userId con _userEntradas:{uid:n}.
+ *        Re-envíos REEMPLAZAN la entrada del usuario (no acumulan).
+ *        Detecta conflictos en abiertas entre distintos usuarios.
+ *        → Corrige RC-3
+ *
+ *   [T4] syncConteoPorUsuarioToFirestore(area) [mejorada]
+ *        Envuelta en runTransaction. Lee, fusiona SOLO el userId
+ *        propio (preserva entradas de otros) y escribe.
+ *        → Corrige RC-4
+ *
+ *   [T5] syncToCloud(retryCount) [mejorada]
+ *        Doc principal en runTransaction: lee, aplica "completada wins"
+ *        en auditoriaStatus, escribe el resultado fusionado.
+ *        → Corrige RC-2
+ *
+ *   [T6] resetConteoAtomicoEnFirestore() [mejorada]
+ *        Batch único para los 6 deletes (3 conteoAreas + 3 userConteo)
+ *        + runTransaction para resetear auditoriaStatus en el doc.
+ *        → Corrige RC-6
+ *
+ * ─── ANTI-BUCLE (dos capas) ──────────────────────────────────
+ *   Capa 1 — metadata.hasPendingWrites: ignora ecos optimistas.
+ *   Capa 2 — _lastLocalWriteTs / _storeLocalAreaTs: ignora ecos
+ *            de confirmación basándose en timestamps.
+ *
+ * ─── CICLO DE VIDA ───────────────────────────────────────────
+ *   startRealtimeListeners()  ← auth.js al confirmar login
+ *   stopRealtimeListeners()   ← auth.js al cerrar sesión
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -44,22 +61,13 @@ import { AREA_KEYS, MAX_CHUNK_SIZE }    from './constants.js';
 import { showNotification }             from './ui.js';
 import { syncStockByAreaFromConteo }    from './products.js';
 
-// ═════════════════════════════════════════════════════════════
-//  REGISTRO DE LISTENERS — Map<string, unsubscribeFn>
-//  Claves predefinidas:
-//    'main'                         → doc principal
-//    'stockArea:almacen|barra1|...' → conteo operativo por área
-//    'conteoArea:almacen|...'       → auditoría atómica por área
-//    'userConteo:almacen|...'       → multiusuario por área
-// ═════════════════════════════════════════════════════════════
+// ─── Registro de listeners ────────────────────────────────────
 const _activeListeners = new Map();
 
-// ── Anti-bucle: timestamp de la última escritura LOCAL ────────
-// syncToCloud() lo actualiza antes de cada set(). El handler del
-// snapshot lo compara para detectar su propio eco de confirmación.
+// ─── Anti-bucle: timestamp de la última escritura local ───────
 let _lastLocalWriteTs = 0;
 
-// ── Debounce del re-render (múltiples snapshots en paralelo) ──
+// ─── Debounce de re-render (múltiples snapshots en paralelo) ──
 let _renderDebounceTimer = null;
 const RENDER_DEBOUNCE_MS = 150;
 
@@ -76,14 +84,14 @@ function _scheduleRender() {
 }
 
 // ═════════════════════════════════════════════════════════════
-//  HELPERS DE CHUNK (subcolecciones paginadas para orders/inventories)
+//  HELPERS DE CHUNK (órdenes e inventarios históricos)
 // ═════════════════════════════════════════════════════════════
 
 async function _writeChunkedSubcollection(docRef, subcollName, dataArray) {
     const colRef      = docRef.collection(subcollName);
     const totalChunks = Math.max(1, Math.ceil(dataArray.length / MAX_CHUNK_SIZE));
 
-    // Paso 1: escribir con prefijo "new_" — los lectores siguen viendo los chunks viejos
+    // Paso 1: escribir con prefijo "new_" (lectores ven chunks viejos)
     const writeBatch = window._db.batch();
     for (let i = 0; i < totalChunks; i++) {
         writeBatch.set(colRef.doc('new_chunk_' + i), {
@@ -95,7 +103,7 @@ async function _writeChunkedSubcollection(docRef, subcollName, dataArray) {
     }
     await writeBatch.commit();
 
-    // Paso 2: renombrar "new_" → definitivos y borrar viejos en un solo batch
+    // Paso 2: renombrar "new_" → definitivos y borrar viejos (write-first)
     const existingSnap = await colRef.get();
     const cleanBatch   = window._db.batch();
     existingSnap.forEach(d => {
@@ -107,7 +115,7 @@ async function _writeChunkedSubcollection(docRef, subcollName, dataArray) {
         }
     });
     if (!existingSnap.empty) await cleanBatch.commit();
-    console.info(`[Firebase][Chunk] ${subcollName} → ${totalChunks} chunk(s) escritos (write-first).`);
+    console.info(`[Firebase][Chunk] ${subcollName} → ${totalChunks} chunk(s) escritos.`);
 }
 
 async function _readChunkedSubcollection(docRef, subcollName) {
@@ -128,7 +136,7 @@ async function _readChunkedSubcollection(docRef, subcollName) {
 }
 
 // ═════════════════════════════════════════════════════════════
-//  BADGE DE SINCRONIZACIÓN (header + sidebar)
+//  BADGE DE SINCRONIZACIÓN
 // ═════════════════════════════════════════════════════════════
 
 export function updateCloudSyncBadge(status) {
@@ -136,13 +144,15 @@ export function updateCloudSyncBadge(status) {
     const dot   = document.getElementById('syncDot');
 
     const cfg = {
-        ok:       { bg: '#06d6a0', icon: '☁️',  text: 'Sincronizado',    pulse: false, dotState: 'ok',      dotTitle: 'Sincronizado ✓'          },
-        syncing:  { bg: '#4cc9f0', icon: '🔄',  text: 'Sincronizando…',  pulse: true,  dotState: 'syncing', dotTitle: 'Subiendo datos…'          },
-        pending:  { bg: '#ffd166', icon: '⏳',  text: 'Pendiente',        pulse: false, dotState: 'pending', dotTitle: 'Cambios pendientes'       },
-        listening:{ bg: '#a78bfa', icon: '👂',  text: 'En tiempo real',  pulse: false, dotState: 'ok',      dotTitle: 'Escuchando cambios en vivo'},
-        error:    { bg: '#ff6b6b', icon: '⚠️',  text: 'Error sync',      pulse: false, dotState: 'error',   dotTitle: 'Error de sincronización'  },
-        offline:  { bg: '#8b8ca8', icon: '📴',  text: 'Sin conexión',    pulse: false, dotState: 'offline', dotTitle: 'Sin conexión'             },
-        none:     { bg: '#50516a', icon: '☁️',  text: 'Sin Firebase',    pulse: false, dotState: 'none',    dotTitle: 'Sin Firebase'             },
+        ok:        { bg: '#06d6a0', icon: '☁️',  text: 'Sincronizado',    pulse: false, dotState: 'ok',      dotTitle: 'Sincronizado ✓' },
+        syncing:   { bg: '#4cc9f0', icon: '🔄',  text: 'Sincronizando…',  pulse: true,  dotState: 'syncing', dotTitle: 'Subiendo datos…' },
+        pending:   { bg: '#ffd166', icon: '⏳',  text: 'Pendiente',        pulse: false, dotState: 'pending', dotTitle: 'Cambios pendientes' },
+        listening: { bg: '#a78bfa', icon: '👂',  text: 'En tiempo real',  pulse: false, dotState: 'ok',      dotTitle: 'Escuchando cambios en vivo' },
+        tx:        { bg: '#38bdf8', icon: '🔒',  text: 'Transacción…',    pulse: true,  dotState: 'syncing', dotTitle: 'Transacción en curso' },
+        error:     { bg: '#ff6b6b', icon: '⚠️',  text: 'Error sync',      pulse: false, dotState: 'error',   dotTitle: 'Error de sincronización' },
+        conflict:  { bg: '#fb923c', icon: '⚡',  text: 'Conflicto',       pulse: false, dotState: 'error',   dotTitle: 'Conflicto detectado' },
+        offline:   { bg: '#8b8ca8', icon: '📴',  text: 'Sin conexión',    pulse: false, dotState: 'offline', dotTitle: 'Sin conexión' },
+        none:      { bg: '#50516a', icon: '☁️',  text: 'Sin Firebase',    pulse: false, dotState: 'none',    dotTitle: 'Sin Firebase' },
     };
 
     if (!window._db) status = 'none';
@@ -163,7 +173,7 @@ export function updateCloudSyncBadge(status) {
 }
 
 // ═════════════════════════════════════════════════════════════
-//  BARRA DE ESTADO DE RED
+//  BARRA DE RED
 // ═════════════════════════════════════════════════════════════
 
 export function updateNetworkStatus() {
@@ -181,66 +191,65 @@ export function updateNetworkStatus() {
         updateCloudSyncBadge('offline');
         console.info('[Network] Modo offline activado.');
     } else {
-        // Al reconectar: sincronizar si había cambios pendientes
         if (state._cloudSyncPending && window._db) {
             console.info('[Network] Reconectado — sincronizando cambios pendientes…');
             syncToCloud().catch(e => console.warn('[Network] Sync al reconectar falló:', e));
         } else {
-            // Si los listeners están activos → mostrar "en tiempo real"
             updateCloudSyncBadge(_activeListeners.size > 0 ? 'listening' : (window._db ? 'ok' : 'none'));
         }
     }
 }
 
 // ═════════════════════════════════════════════════════════════
-//  HELPERS INTERNOS: aplicar snapshots al estado
+//  HELPERS INTERNOS: ignorar snapshots propios
 // ═════════════════════════════════════════════════════════════
 
-/**
- * Determina si un snapshot debe ignorarse.
- * Retorna true (ignorar) en dos casos:
- *   1. hasPendingWrites: es el eco optimista de una escritura local,
- *      todavía no confirmada por el servidor.
- *   2. El _lastModified del snapshot es ≤ al timestamp de la última
- *      escritura local: es la confirmación de nuestra propia escritura.
- *
- * @param {firebase.firestore.DocumentSnapshot} snap
- * @param {number} [localLastModified] - timestamp de nuestra última escritura
- */
 function _shouldIgnoreSnapshot(snap, localLastModified = _lastLocalWriteTs) {
-    // Capa 1: escritura local optimista (aún no confirmada por el servidor)
+    // Capa 1: eco optimista (escritura local aún no confirmada)
     if (snap.metadata.hasPendingWrites) {
-        console.debug('[Snapshot] Ignorando echo local (hasPendingWrites).');
+        console.debug('[Snapshot] Ignorando eco local (hasPendingWrites).');
         return true;
     }
-
-    // Capa 2: snapshot de confirmación de nuestra propia escritura
+    // Capa 2: confirmación de nuestra propia escritura
     const snapTs = snap.data()?._lastModified || 0;
     if (snapTs > 0 && snapTs <= localLastModified) {
-        console.debug(`[Snapshot] Ignorando echo de confirmación (snapTs=${snapTs} ≤ local=${localLastModified}).`);
+        console.debug(`[Snapshot] Ignorando eco de confirmación (snapTs=${snapTs} ≤ local=${localLastModified}).`);
         return true;
     }
-
     return false;
 }
 
-/**
- * Aplica datos del doc principal al estado local.
- * Lógica compartida entre el handler de onSnapshot y _applyCloudData.
- */
+// ─── Timestamps por área en sessionStorage (no contaminar LS) ─
+function _getLocalAreaTs(key) {
+    try { return parseInt(sessionStorage.getItem(`_areaTs:${key}`) || '0', 10); } catch (_) { return 0; }
+}
+function _storeLocalAreaTs(key, ts) {
+    try { sessionStorage.setItem(`_areaTs:${key}`, String(ts)); } catch (_) {}
+}
+
+// ═════════════════════════════════════════════════════════════
+//  HELPERS: aplicar snapshots al estado local
+// ═════════════════════════════════════════════════════════════
+
 async function _applyMainDocData(data) {
     if (!data) return;
     const docRef = window._db.collection('inventarioApp').doc(window.FIRESTORE_DOC_ID);
 
-    if (Array.isArray(data.products))    state.products        = data.products;
-    if (Array.isArray(data.cart))        state.cart            = data.cart;
-    if (data.activeTab)                  state.activeTab       = data.activeTab;
-    if (data.selectedArea)               state.selectedArea    = data.selectedArea;
-    if (data.auditoriaStatus)            state.auditoriaStatus = data.auditoriaStatus;
-    if (data.auditoriaConteo)            state.auditoriaConteo = data.auditoriaConteo;
+    if (Array.isArray(data.products))  state.products        = data.products;
+    if (Array.isArray(data.cart))      state.cart            = data.cart;
+    if (data.activeTab)                state.activeTab       = data.activeTab;
+    if (data.selectedArea)             state.selectedArea    = data.selectedArea;
+    if (data.auditoriaConteo)          state.auditoriaConteo = data.auditoriaConteo;
 
-    // Historiales chunkeados: una lectura puntual (get) es suficiente
-    // porque el historial no cambia en tiempo real (solo append)
+    // auditoriaStatus: aplicar "completada wins" al fusionar
+    if (data.auditoriaStatus) {
+        const mergedStatus = { ...state.auditoriaStatus };
+        AREA_KEYS.forEach(a => {
+            if (data.auditoriaStatus[a] === 'completada') mergedStatus[a] = 'completada';
+        });
+        state.auditoriaStatus = mergedStatus;
+    }
+
     if (data._ordersInChunks) {
         const r = await _readChunkedSubcollection(docRef, 'ordersChunks');
         if (r.length) state.orders = r;
@@ -256,10 +265,6 @@ async function _applyMainDocData(data) {
     }
 }
 
-/**
- * Aplica datos de un área de stockAreas al inventarioConteo local.
- * Fusiona solo el área recibida, respetando el resto de áreas.
- */
 function _applyStockAreaData(area, areaData) {
     Object.keys(areaData).forEach(prodId => {
         if (prodId === '_lastModified') return;
@@ -269,9 +274,6 @@ function _applyStockAreaData(area, areaData) {
     syncStockByAreaFromConteo();
 }
 
-/**
- * Aplica datos de un área de conteoAreas (auditoría atómica con conflictos).
- */
 function _applyConteoAreaData(area, areaData) {
     state.products.forEach(p => {
         if (!areaData[p.id]) return;
@@ -279,50 +281,40 @@ function _applyConteoAreaData(area, areaData) {
         if (!state.auditoriaConteo[p.id][area]) state.auditoriaConteo[p.id][area] = {};
 
         const cloudEntry = areaData[p.id];
-        // Propagar conflictos de abiertas detectados en el servidor
         if (cloudEntry.alerta_conflicto) {
             state.auditoriaConteo[p.id][area]._conflictoAbiertas =
                 cloudEntry.stock_abierto_alternativo;
-            console.warn(`[Snapshot][conteoArea] Conflicto en ${p.id}/${area}`);
+            console.warn(`[Snapshot][conteoArea] Conflicto detectado: ${p.id}/${area}`);
         } else {
             delete state.auditoriaConteo[p.id][area]._conflictoAbiertas;
+        }
+
+        // Actualizar el totalizador local con los datos de la nube
+        if (typeof cloudEntry.enteras === 'number') {
+            state.auditoriaConteo[p.id][area].enteras = cloudEntry.enteras;
         }
     });
 }
 
-/**
- * Aplica datos de un área de conteoPorUsuario (multiusuario).
- * Solo fusiona datos de OTROS dispositivos; nunca sobreescribe el userId propio.
- */
 function _applyUserConteoData(area, areaData) {
     const myId = state.auditCurrentUser?.userId;
-
     state.products.forEach(p => {
         const prodData = areaData[p.id];
         if (!prodData) return;
-
-        if (!state.auditoriaConteoPorUsuario[p.id])
-            state.auditoriaConteoPorUsuario[p.id] = {};
-        if (!state.auditoriaConteoPorUsuario[p.id][area])
-            state.auditoriaConteoPorUsuario[p.id][area] = {};
-
+        if (!state.auditoriaConteoPorUsuario[p.id])       state.auditoriaConteoPorUsuario[p.id] = {};
+        if (!state.auditoriaConteoPorUsuario[p.id][area]) state.auditoriaConteoPorUsuario[p.id][area] = {};
         Object.keys(prodData).forEach(uid => {
-            // Nunca sobreescribir nuestra propia entrada
-            if (uid === myId) return;
+            if (uid === myId) return; // nunca sobreescribir el propio
+            if (uid.startsWith('_')) return; // ignorar campos internos
             state.auditoriaConteoPorUsuario[p.id][area][uid] = prodData[uid];
-            console.debug(`[Snapshot][multiUser] Conteo recibido de ${uid} para ${p.id}/${area}`);
+            console.debug(`[Snapshot][multiUser] Conteo de ${uid} para ${p.id}/${area}`);
         });
     });
 }
 
-/**
- * Persiste estado en localStorage y actualiza el hash sin disparar
- * syncToCloud (los datos llegaron de la nube, no del usuario local).
- */
 async function _persistCloudUpdate(cloudTs) {
     const { saveToLocalStorage } = await import('./storage.js');
-    // Actualizar el hash ANTES de saveToLocalStorage para que el detector
-    // de cambios no marque _cloudSyncPending y no dispare syncToCloud
+    // Hash actualizado ANTES de saveToLocalStorage para no disparar syncToCloud
     state._lastDataHash =
         JSON.stringify(state.products)  +
         JSON.stringify(state.orders)    +
@@ -335,261 +327,155 @@ async function _persistCloudUpdate(cloudTs) {
 }
 
 // ═════════════════════════════════════════════════════════════
-//  LISTENER 1 — DOC PRINCIPAL (productos, carrito, auditoría)
+//  LISTENERS onSnapshot
 // ═════════════════════════════════════════════════════════════
 
 function _subscribeMainDoc() {
     if (!window._db) return;
     const docRef = window._db.collection('inventarioApp').doc(window.FIRESTORE_DOC_ID);
-
     console.info('[Snapshot] Activando listener del doc principal…');
 
     const unsub = docRef.onSnapshot(
         { includeMetadataChanges: true },
         async snap => {
             try {
-                if (!snap.exists) {
-                    console.info('[Snapshot][main] Doc no existe aún — subiendo datos locales.');
-                    await syncToCloud();
-                    return;
-                }
-
+                if (!snap.exists) { await syncToCloud(); return; }
                 if (_shouldIgnoreSnapshot(snap)) return;
-
                 const data    = snap.data();
                 const cloudTs = data._lastModified || 0;
                 const localTs = parseInt(localStorage.getItem('inventarioApp_lastModified') || '0', 10);
-
-                // Solo aplicar si la nube tiene datos más recientes
-                if (cloudTs <= localTs) {
-                    console.debug(`[Snapshot][main] Sin cambios nuevos (cloudTs=${cloudTs} ≤ localTs=${localTs}).`);
-                    return;
-                }
-
-                console.info(`[Snapshot][main] Cambio recibido (cloudTs=${cloudTs}). Aplicando…`);
+                if (cloudTs <= localTs) return;
+                console.info(`[Snapshot][main] Cambio recibido (Δts=${cloudTs - localTs}ms). Aplicando…`);
                 await _applyMainDocData(data);
                 await _persistCloudUpdate(cloudTs);
                 updateCloudSyncBadge('listening');
                 _scheduleRender();
-
             } catch (err) {
-                console.error('[Snapshot][main] Error al procesar snapshot:', err);
+                console.error('[Snapshot][main] Error al procesar:', err);
                 updateCloudSyncBadge('error');
             }
         },
-        err => {
-            console.error('[Snapshot][main] Error en listener:', err);
-            updateCloudSyncBadge('error');
-        }
+        err => { console.error('[Snapshot][main] Error en listener:', err); updateCloudSyncBadge('error'); }
     );
-
     _activeListeners.set('main', unsub);
 }
 
-// ═════════════════════════════════════════════════════════════
-//  LISTENERS 2-4 — stockAreas/{area} (conteo operativo)
-// ═════════════════════════════════════════════════════════════
-
 function _subscribeStockAreas() {
     if (!window._db) return;
-    const baseRef = window._db
-        .collection('inventarioApp')
-        .doc(window.FIRESTORE_DOC_ID)
-        .collection('stockAreas');
+    const baseRef = window._db.collection('inventarioApp').doc(window.FIRESTORE_DOC_ID).collection('stockAreas');
 
     for (const area of AREA_KEYS) {
-        const areaRef = baseRef.doc(area);
-
         console.info(`[Snapshot] Activando listener stockAreas/${area}…`);
-
-        const unsub = areaRef.onSnapshot(
+        const unsub = baseRef.doc(area).onSnapshot(
             { includeMetadataChanges: true },
             snap => {
                 try {
                     if (!snap.exists) return;
-                    if (_shouldIgnoreSnapshot(snap)) return;
-
+                    if (_shouldIgnoreSnapshot(snap, _getLocalAreaTs(area))) return;
                     const areaData = snap.data();
                     const cloudTs  = areaData._lastModified || 0;
-
-                    // Comparar con el timestamp del área que teníamos localmente
-                    const localAreaTs = _getLocalAreaTs(area);
-                    if (cloudTs <= localAreaTs) {
-                        console.debug(`[Snapshot][stockArea:${area}] Sin cambios nuevos.`);
-                        return;
-                    }
-
+                    if (cloudTs <= _getLocalAreaTs(area)) return;
                     console.info(`[Snapshot][stockArea:${area}] Conteo actualizado por otro dispositivo.`);
                     _applyStockAreaData(area, areaData);
                     _storeLocalAreaTs(area, cloudTs);
                     updateCloudSyncBadge('listening');
                     _scheduleRender();
-
                 } catch (err) {
-                    console.error(`[Snapshot][stockArea:${area}] Error al procesar:`, err);
+                    console.error(`[Snapshot][stockArea:${area}] Error:`, err);
                 }
             },
             err => console.error(`[Snapshot][stockArea:${area}] Error en listener:`, err)
         );
-
         _activeListeners.set(`stockArea:${area}`, unsub);
     }
 }
 
-// ═════════════════════════════════════════════════════════════
-//  LISTENERS 5-7 — conteoAreas/{area} (auditoría atómica)
-// ═════════════════════════════════════════════════════════════
-
 function _subscribeConteoAreas() {
     if (!window._db) return;
-    const baseRef = window._db
-        .collection('inventarioApp')
-        .doc(window.FIRESTORE_DOC_ID)
-        .collection('conteoAreas');
+    const baseRef = window._db.collection('inventarioApp').doc(window.FIRESTORE_DOC_ID).collection('conteoAreas');
 
     for (const area of AREA_KEYS) {
-        const areaRef = baseRef.doc(area);
-
         console.info(`[Snapshot] Activando listener conteoAreas/${area}…`);
-
-        const unsub = areaRef.onSnapshot(
+        const unsub = baseRef.doc(area).onSnapshot(
             { includeMetadataChanges: true },
             snap => {
                 try {
                     if (!snap.exists) return;
-                    if (_shouldIgnoreSnapshot(snap)) return;
-
+                    if (_shouldIgnoreSnapshot(snap, _getLocalAreaTs(`conteo:${area}`))) return;
                     const areaData = snap.data();
                     const cloudTs  = areaData._lastModified || 0;
-                    const localTs  = _getLocalAreaTs(`conteo:${area}`);
-                    if (cloudTs <= localTs) return;
-
+                    if (cloudTs <= _getLocalAreaTs(`conteo:${area}`)) return;
                     console.info(`[Snapshot][conteoArea:${area}] Conteo de auditoría actualizado.`);
                     _applyConteoAreaData(area, areaData);
                     _storeLocalAreaTs(`conteo:${area}`, cloudTs);
                     updateCloudSyncBadge('listening');
                     _scheduleRender();
-
                 } catch (err) {
-                    console.error(`[Snapshot][conteoArea:${area}] Error al procesar:`, err);
+                    console.error(`[Snapshot][conteoArea:${area}] Error:`, err);
                 }
             },
             err => console.error(`[Snapshot][conteoArea:${area}] Error en listener:`, err)
         );
-
         _activeListeners.set(`conteoArea:${area}`, unsub);
     }
 }
 
-// ═════════════════════════════════════════════════════════════
-//  LISTENERS 8-10 — conteoPorUsuario/{area} (multiusuario)
-// ═════════════════════════════════════════════════════════════
-
 function _subscribeConteoPorUsuario() {
     if (!window._db) return;
-    const baseRef = window._db
-        .collection('inventarioApp')
-        .doc(window.FIRESTORE_DOC_ID)
-        .collection('conteoPorUsuario');
+    const baseRef = window._db.collection('inventarioApp').doc(window.FIRESTORE_DOC_ID).collection('conteoPorUsuario');
 
     for (const area of AREA_KEYS) {
-        const areaRef = baseRef.doc(area);
-
         console.info(`[Snapshot] Activando listener conteoPorUsuario/${area}…`);
-
-        const unsub = areaRef.onSnapshot(
+        const unsub = baseRef.doc(area).onSnapshot(
             { includeMetadataChanges: true },
             snap => {
                 try {
                     if (!snap.exists) return;
-                    if (_shouldIgnoreSnapshot(snap)) return;
-
+                    if (_shouldIgnoreSnapshot(snap, _getLocalAreaTs(`user:${area}`))) return;
                     const areaData = snap.data();
                     const cloudTs  = areaData._lastModified || 0;
-                    const localTs  = _getLocalAreaTs(`user:${area}`);
-                    if (cloudTs <= localTs) return;
-
+                    if (cloudTs <= _getLocalAreaTs(`user:${area}`)) return;
                     console.info(`[Snapshot][userConteo:${area}] Conteo de otro dispositivo recibido.`);
                     _applyUserConteoData(area, areaData);
                     _storeLocalAreaTs(`user:${area}`, cloudTs);
                     updateCloudSyncBadge('listening');
                     _scheduleRender();
-
                 } catch (err) {
-                    console.error(`[Snapshot][userConteo:${area}] Error al procesar:`, err);
+                    console.error(`[Snapshot][userConteo:${area}] Error:`, err);
                 }
             },
             err => console.error(`[Snapshot][userConteo:${area}] Error en listener:`, err)
         );
-
         _activeListeners.set(`userConteo:${area}`, unsub);
     }
 }
 
-// ─── Timestamps por área (clave → sessionStorage para no contaminar LS) ──────
-function _getLocalAreaTs(key) {
-    try { return parseInt(sessionStorage.getItem(`_areaTs:${key}`) || '0', 10); } catch (_) { return 0; }
-}
-function _storeLocalAreaTs(key, ts) {
-    try { sessionStorage.setItem(`_areaTs:${key}`, String(ts)); } catch (_) {}
-}
-
 // ═════════════════════════════════════════════════════════════
-//  API PÚBLICA — CICLO DE VIDA DE LISTENERS
+//  CICLO DE VIDA DE LISTENERS
 // ═════════════════════════════════════════════════════════════
 
-/**
- * Inicia todos los listeners en tiempo real.
- * Debe llamarse DESPUÉS de confirmar que el usuario está autenticado.
- * Si ya hay listeners activos, primero los detiene (idempotente).
- */
 export function startRealtimeListeners() {
-    if (!window._db) {
-        console.warn('[Snapshot] Firebase no disponible — listeners no iniciados.');
-        return;
-    }
-
-    // Idempotente: si ya corren, limpiar primero
-    if (_activeListeners.size > 0) {
-        console.info('[Snapshot] Listeners ya activos — reiniciando…');
-        stopRealtimeListeners();
-    }
-
+    if (!window._db) { console.warn('[Snapshot] Firebase no disponible.'); return; }
+    if (_activeListeners.size > 0) { console.info('[Snapshot] Reiniciando listeners…'); stopRealtimeListeners(); }
     console.info('[Snapshot] ══ Iniciando 10 listeners en tiempo real ══');
-
-    _subscribeMainDoc();          // [1]   doc principal
-    _subscribeStockAreas();       // [2-4] conteo operativo
-    _subscribeConteoAreas();      // [5-7] auditoría atómica
-    _subscribeConteoPorUsuario(); // [8-10] multiusuario
-
+    _subscribeMainDoc();
+    _subscribeStockAreas();
+    _subscribeConteoAreas();
+    _subscribeConteoPorUsuario();
     updateCloudSyncBadge('listening');
     console.info(`[Snapshot] ✓ ${_activeListeners.size} listeners activos.`);
 }
 
-/**
- * Detiene todos los listeners y libera los recursos.
- * Debe llamarse al cerrar sesión (auth.js → signOutUser).
- * También limpia los timers de debounce pendientes.
- */
 export function stopRealtimeListeners() {
     if (_activeListeners.size === 0) return;
-
     console.info(`[Snapshot] Deteniendo ${_activeListeners.size} listeners…`);
     _activeListeners.forEach((unsub, key) => {
-        try {
-            unsub();
-            console.debug(`[Snapshot] Listener "${key}" detenido.`);
-        } catch (e) {
-            console.warn(`[Snapshot] Error al detener listener "${key}":`, e);
-        }
+        try { unsub(); console.debug(`[Snapshot] Listener "${key}" detenido.`); }
+        catch (e) { console.warn(`[Snapshot] Error al detener "${key}":`, e); }
     });
     _activeListeners.clear();
-
-    // Limpiar debounce pendiente
     clearTimeout(_renderDebounceTimer);
     _renderDebounceTimer = null;
-
-    // Limpiar timestamps de área de sessionStorage
     try {
         const keysToRemove = [];
         for (let i = 0; i < sessionStorage.length; i++) {
@@ -598,26 +484,166 @@ export function stopRealtimeListeners() {
         }
         keysToRemove.forEach(k => sessionStorage.removeItem(k));
     } catch (_) {}
-
     updateCloudSyncBadge('none');
     console.info('[Snapshot] ✓ Todos los listeners detenidos.');
 }
 
-/** Retorna true si los listeners de tiempo real están activos. */
 export function isListening() {
     return _activeListeners.size > 0;
 }
 
 // ═════════════════════════════════════════════════════════════
-//  SYNC WRITE — SUBIR DATOS A FIRESTORE
+//  [T1] txCloseZone — CIERRE ATÓMICO DE ZONA
 // ═════════════════════════════════════════════════════════════
-
 /**
- * Sube el estado actual a Firestore (estrategia último-gana).
- * Actualiza _lastLocalWriteTs antes de escribir para que el
- * listener onSnapshot no procese el eco de confirmación.
+ * Cierra atómicamente una zona de auditoría en Firestore.
  *
- * @param {number} [retryCount=0] — back-off interno, no usar directamente
+ * PROBLEMA RESUELTO (RC-1, RC-5):
+ *   Sin transacción, dos dispositivos cerrando zonas distintas al mismo
+ *   tiempo sobreescriben el campo auditoriaStatus completo. El dispositivo
+ *   que escribe último "re-abre" la zona cerrada por el otro.
+ *
+ * SOLUCIÓN:
+ *   1. runTransaction lee el estado actual de auditoriaStatus.
+ *   2. Aplica regla "completada always wins": si la zona ya estaba cerrada
+ *      en Firestore (por otro dispositivo), no vuelve a escribir (idempotente).
+ *   3. Usa tx.update() con dot-notation ('auditoriaStatus.almacen') en lugar
+ *      de tx.set({auditoriaStatus: {...}}) para escribir SOLO el campo de
+ *      esta zona, dejando intactos los de las otras zonas.
+ *
+ * @param {string} area - 'almacen' | 'barra1' | 'barra2'
+ * @returns {{ wasAlreadyClosed: boolean, mergedStatus: object }}
+ */
+export async function txCloseZone(area) {
+    if (!window._db) {
+        console.info('[TxCloseZone] Firebase no disponible — solo local.');
+        return { wasAlreadyClosed: false, mergedStatus: state.auditoriaStatus };
+    }
+    if (!navigator.onLine) {
+        console.info('[TxCloseZone] Sin conexión — cierre guardado localmente.');
+        return { wasAlreadyClosed: false, mergedStatus: state.auditoriaStatus };
+    }
+
+    const docRef  = window._db.collection('inventarioApp').doc(window.FIRESTORE_DOC_ID);
+    const writeTs = Date.now();
+    updateCloudSyncBadge('tx');
+
+    try {
+        const result = await window._db.runTransaction(async tx => {
+            const snap        = await tx.get(docRef);
+            const cloudStatus = snap.exists ? (snap.data()?.auditoriaStatus || {}) : {};
+
+            // ── Idempotencia: la zona ya fue cerrada en Firestore ──────────
+            if (cloudStatus[area] === 'completada') {
+                console.info(`[TxCloseZone] Zona "${area}" ya estaba cerrada en Firestore (idempotente).`);
+                return { wasAlreadyClosed: true, mergedStatus: cloudStatus };
+            }
+
+            // ── Escritura con dot-notation: solo toca este campo ──────────
+            // tx.update() con 'auditoriaStatus.almacen' NO toca barra1/barra2
+            // tx.set({auditoriaStatus: {...}}) SOBREESCRIBIRÍA toda la sub-map
+            tx.update(docRef, {
+                [`auditoriaStatus.${area}`]: 'completada',
+                _lastModified: writeTs,
+            });
+
+            // Construir el estado fusionado que tendrá Firestore después
+            const mergedStatus = {
+                almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente',
+                ...cloudStatus,
+                [area]: 'completada',
+            };
+            return { wasAlreadyClosed: false, mergedStatus };
+        });
+
+        // Registrar nuestro timestamp para bloquear el eco del onSnapshot
+        _lastLocalWriteTs = writeTs;
+        _storeLocalAreaTs('mainDoc', writeTs);
+
+        // Sincronizar el estado local con el resultado de Firestore
+        if (result.mergedStatus) {
+            state.auditoriaStatus = result.mergedStatus;
+        }
+
+        const badge = result.wasAlreadyClosed ? 'listening' : 'listening';
+        updateCloudSyncBadge(badge);
+        console.info(`[TxCloseZone] ✓ Zona "${area}" cerrada${result.wasAlreadyClosed ? ' (ya estaba, idempotente)' : ' en Firestore'}.`);
+        return result;
+
+    } catch (err) {
+        console.error('[TxCloseZone] Error en transacción:', err.code || err.message, err);
+        updateCloudSyncBadge('error');
+        showNotification('⚠️ Error al cerrar zona — estado guardado localmente');
+        // Devolver el estado local para que audit.js siga funcionando
+        return { wasAlreadyClosed: false, mergedStatus: state.auditoriaStatus, error: err };
+    }
+}
+
+// ═════════════════════════════════════════════════════════════
+//  [T2] HELPER PRIVADO: _txMergeStockArea
+// ═════════════════════════════════════════════════════════════
+/**
+ * Fusiona el conteo operativo de un área dentro de una transacción.
+ *
+ * PROBLEMA RESUELTO (RC-2 para stockAreas):
+ *   set(ap, {merge:true}) fusiona a nivel de documento, pero no a nivel
+ *   de campo dentro del mapa. Si dos dispositivos actualizan productos
+ *   distintos del mismo área simultáneamente, uno puede sobreescribir
+ *   los productos del otro.
+ *
+ * SOLUCIÓN:
+ *   Leer el documento de área dentro de la transacción, fusionar
+ *   producto a producto (este dispositivo solo actualiza sus propios
+ *   productos, preserva los demás), y escribir el resultado.
+ *
+ * @param {firebase.firestore.Transaction} tx
+ * @param {firebase.firestore.DocumentReference} areaRef
+ * @param {string} area
+ * @param {number} localTs
+ */
+async function _txMergeStockArea(tx, areaRef, area, localTs) {
+    const snap        = await tx.get(areaRef);
+    const cloudData   = snap.exists ? snap.data() : {};
+    const cloudAreaTs = cloudData._lastModified || 0;
+
+    // Si la nube tiene datos más recientes para esta área, no sobreescribir
+    if (cloudAreaTs > localTs) {
+        console.debug(`[TxStockArea] Área "${area}" más reciente en nube (${cloudAreaTs} > ${localTs}). No sobreescribir.`);
+        return false; // sin escritura
+    }
+
+    // Fusionar: este dispositivo escribe sus productos, preserva los del resto
+    const mergedData = { ...cloudData, _lastModified: localTs };
+    Object.keys(state.inventarioConteo).forEach(prodId => {
+        if (state.inventarioConteo[prodId]?.[area]) {
+            mergedData[prodId] = state.inventarioConteo[prodId][area];
+        }
+    });
+
+    tx.set(areaRef, mergedData);
+    console.debug(`[TxStockArea] Área "${area}" fusionada correctamente.`);
+    return true; // escritura realizada
+}
+
+// ═════════════════════════════════════════════════════════════
+//  [T5] syncToCloud — SUBIDA PRINCIPAL (TRANSACCIONAL)
+// ═════════════════════════════════════════════════════════════
+/**
+ * Sube el estado local a Firestore usando runTransaction para el doc
+ * principal. Garantiza atomicidad en el par lectura-escritura.
+ *
+ * PROBLEMAS RESUELTOS:
+ *   RC-1: auditoriaStatus se fusiona campo a campo con "completada wins".
+ *         Ningún dispositivo puede re-abrir una zona que otro ya cerró.
+ *   RC-2: La transacción elimina la ventana TOCTOU entre get() y set().
+ *
+ * FUSIÓN DE auditoriaStatus dentro de la transacción:
+ *   La regla "completada always wins" se aplica tanto a datos locales como
+ *   a datos de Firestore. Si Firestore tiene una zona como completada y el
+ *   estado local la tiene como pendiente (porque ese dispositivo no la
+ *   cerró), la zona permanece completada en el resultado final.
+ *
+ * @param {number} [retryCount=0]
  */
 export async function syncToCloud(retryCount = 0) {
     if (!window._db)             return;
@@ -630,63 +656,109 @@ export async function syncToCloud(retryCount = 0) {
 
     state._syncInProgress = true;
     updateCloudSyncBadge('syncing');
-    console.info('[Firebase] syncToCloud iniciado…');
+    console.info('[Firebase] syncToCloud (transaccional) iniciado…');
 
     try {
-        const localTs = parseInt(localStorage.getItem('inventarioApp_lastModified') || '0', 10);
-        const docRef  = window._db.collection('inventarioApp').doc(window.FIRESTORE_DOC_ID);
+        const localTs  = parseInt(localStorage.getItem('inventarioApp_lastModified') || '0', 10);
+        const docRef   = window._db.collection('inventarioApp').doc(window.FIRESTORE_DOC_ID);
+        const stockRef = docRef.collection('stockAreas');
 
-        // Consulta previa: ¿la nube tiene datos más recientes?
-        // (útil en la carga inicial cuando aún no hay listener activo)
-        const snap = await docRef.get();
-        if (snap.exists) {
-            const cloudTs = snap.data()._lastModified || 0;
-            if (cloudTs > localTs) {
-                console.info('[Firebase] Nube más reciente — aplicando antes de subir.');
-                state._syncInProgress = false;
-                await _applyMainDocData(snap.data());
-                await _persistCloudUpdate(cloudTs);
-                _scheduleRender();
-                return;
-            }
-        }
+        // Referencias de áreas para incluir en la transacción
+        const areaRefs = AREA_KEYS.map(a => stockRef.doc(a));
 
-        // Marcar el timestamp que vamos a escribir ANTES del set()
-        // para que el handler onSnapshot pueda detectar su eco
-        _lastLocalWriteTs = localTs;
+        // ── Transacción: doc principal + 3 stockAreas (4 reads + 4 writes) ──
+        let transactionResult = null;
 
-        const payload = {
-            products:             state.products,
-            cart:                 state.cart,
-            activeTab:            state.activeTab,
-            selectedArea:         state.selectedArea,
-            auditoriaStatus:      state.auditoriaStatus,
-            auditoriaConteo:      state.auditoriaConteo,
-            _lastModified:        localTs,
-            _syncedAt:            Date.now(),
-            _ordersInChunks:      true,
-            _inventoriesInChunks: true,
-            _conteoInSubcol:      true,
-        };
+        await window._db.runTransaction(async tx => {
+            // Lee el doc principal y las 3 áreas en paralelo dentro de la tx
+            const [mainSnap, ...areaSnaps] = await Promise.all([
+                tx.get(docRef),
+                ...areaRefs.map(r => tx.get(r)),
+            ]);
 
-        // Escribir inventarioConteo por área (merge:true = no sobreescribe otras áreas)
-        const stockAreaRef = docRef.collection('stockAreas');
-        const areaWrites   = AREA_KEYS.map(area => {
-            const ap = { _lastModified: localTs };
-            Object.keys(state.inventarioConteo).forEach(prodId => {
-                if (state.inventarioConteo[prodId]?.[area]) {
-                    ap[prodId] = state.inventarioConteo[prodId][area];
+            // ── Verificar timestamp: ¿la nube tiene datos más recientes? ──
+            if (mainSnap.exists) {
+                const cloudTs = mainSnap.data()._lastModified || 0;
+                if (cloudTs > localTs) {
+                    console.info(`[Firebase][Tx] Nube más reciente (Δ${cloudTs - localTs}ms). Abortando escritura.`);
+                    transactionResult = { action: 'applyCloud', cloudData: mainSnap.data() };
+                    // No escribir nada: transacción solo de lectura
+                    return;
                 }
+            }
+
+            // ── Fusionar auditoriaStatus: "completada always wins" ────────
+            const cloudStatus = mainSnap.exists ? (mainSnap.data()?.auditoriaStatus || {}) : {};
+            const mergedStatus = {};
+            AREA_KEYS.forEach(a => {
+                // La zona se marca completada si CUALQUIERA de los dos
+                // (local o cloud) la tiene como completada. Nunca se re-abre.
+                mergedStatus[a] =
+                    (cloudStatus[a] === 'completada' || state.auditoriaStatus[a] === 'completada')
+                        ? 'completada'
+                        : (state.auditoriaStatus[a] || cloudStatus[a] || 'pendiente');
             });
-            // Registrar el timestamp localmente para que el listener no lo procese
-            _storeLocalAreaTs(area, localTs);
-            return stockAreaRef.doc(area).set(ap, { merge: true });
+
+            // ── Construir payload del doc principal ───────────────────────
+            _lastLocalWriteTs = localTs; // anti-eco ANTES de la escritura
+            const payload = {
+                products:             state.products,
+                cart:                 state.cart,
+                activeTab:            state.activeTab,
+                selectedArea:         state.selectedArea,
+                auditoriaStatus:      mergedStatus, // fusionado, no sobrescrito
+                auditoriaConteo:      state.auditoriaConteo,
+                _lastModified:        localTs,
+                _syncedAt:            Date.now(),
+                _ordersInChunks:      true,
+                _inventoriesInChunks: true,
+                _conteoInSubcol:      true,
+            };
+            tx.set(docRef, payload, { merge: true });
+
+            // ── Fusionar stockAreas producto a producto ───────────────────
+            areaSnaps.forEach((areaSnap, idx) => {
+                const area      = AREA_KEYS[idx];
+                const cloudArea = areaSnap.exists ? areaSnap.data() : {};
+                const cloudAreaTs = cloudArea._lastModified || 0;
+
+                // Si el área es más reciente en nube, preservarla
+                if (cloudAreaTs > localTs) {
+                    console.debug(`[Firebase][Tx] stockArea "${area}" más reciente en nube — preservando.`);
+                    return;
+                }
+
+                const mergedArea = { ...cloudArea, _lastModified: localTs };
+                Object.keys(state.inventarioConteo).forEach(prodId => {
+                    if (state.inventarioConteo[prodId]?.[area]) {
+                        mergedArea[prodId] = state.inventarioConteo[prodId][area];
+                    }
+                });
+                tx.set(areaRefs[idx], mergedArea);
+                _storeLocalAreaTs(area, localTs); // anti-eco para stockArea listener
+            });
+
+            transactionResult = { action: 'wrote', mergedStatus };
         });
 
-        // Escritura paralela: doc principal + áreas + historiales chunkeados
+        // ── Después de la transacción: acciones según resultado ───────────
+        if (transactionResult?.action === 'applyCloud') {
+            // La nube tiene datos más recientes → aplicar y no subir
+            state._syncInProgress = false;
+            await _applyMainDocData(transactionResult.cloudData);
+            await _persistCloudUpdate(transactionResult.cloudData._lastModified);
+            _scheduleRender();
+            return;
+        }
+
+        if (transactionResult?.mergedStatus) {
+            // Actualizar estado local con el auditoriaStatus fusionado
+            state.auditoriaStatus = transactionResult.mergedStatus;
+        }
+
+        // Historiales chunkeados: fuera de la transacción (son batch separados)
+        // Es seguro hacerlo fuera porque son datos históricos append-only.
         await Promise.all([
-            docRef.set(payload, { merge: true }),
-            ...areaWrites,
             _writeChunkedSubcollection(docRef, 'ordersChunks',      state.orders),
             _writeChunkedSubcollection(docRef, 'inventoriesChunks', state.inventories),
         ]);
@@ -695,15 +767,15 @@ export async function syncToCloud(retryCount = 0) {
         state._lastCloudSync    = Date.now();
         state._syncInProgress   = false;
         updateCloudSyncBadge(_activeListeners.size > 0 ? 'listening' : 'ok');
-        console.info(`[Firebase] ✓ Sincronizado: ${new Date(state._lastCloudSync).toLocaleTimeString()}`);
+        console.info(`[Firebase] ✓ syncToCloud completado: ${new Date(state._lastCloudSync).toLocaleTimeString()}`);
 
     } catch (err) {
         state._syncInProgress = false;
-        console.error('[Firebase] Error en syncToCloud:', err);
+        console.error('[Firebase] Error en syncToCloud:', err.code || err.message, err);
 
         if (retryCount < 3) {
             const delay = Math.pow(2, retryCount + 1) * 1000;
-            console.info(`[Firebase] Reintentando en ${delay / 1000}s… (intento ${retryCount + 1}/3)`);
+            console.info(`[Firebase] Reintentando en ${delay / 1000}s… (${retryCount + 1}/3)`);
             setTimeout(() => syncToCloud(retryCount + 1), delay);
         } else {
             state._cloudSyncPending = true;
@@ -714,19 +786,36 @@ export async function syncToCloud(retryCount = 0) {
 }
 
 // ═════════════════════════════════════════════════════════════
-//  ESCRITURA ATÓMICA DE CONTEO POR ÁREA (anticolisión)
+//  [T3] syncConteoAtomicoPorArea — CONTEO SIN ACUMULACIÓN
 // ═════════════════════════════════════════════════════════════
-
 /**
- * Escribe el conteo de auditoría de UN área en Firestore de forma atómica.
- * Registra el timestamp en _storeLocalAreaTs para que el listener
- * onSnapshot de conteoAreas no procese el eco de nuestra propia escritura.
+ * Sincroniza el conteo de auditoría de un área en Firestore.
+ *
+ * PROBLEMA RESUELTO (RC-3 — acumulación incorrecta de enteras):
+ *   El código anterior hacía:
+ *     enteras = (local.enteras || 0) + (cloud.enteras || 0)
+ *   Si un usuario re-enviaba su conteo, sus botellas se SUMABAN dos
+ *   veces al total. Con 10 usuarios, un re-envío producía totales
+ *   completamente incorrectos.
+ *
+ * SOLUCIÓN — _userEntradas:
+ *   Se mantiene un mapa { userId → enteras } por producto y área:
+ *     _userEntradas: { "usr-abc": 10, "usr-def": 8 }
+ *   El total visible (enteras) = Σ(values de _userEntradas).
+ *   Cuando un usuario re-envía, se REEMPLAZA su entrada anterior.
+ *   El total se recalcula desde cero sobre el mapa actualizado.
+ *
+ * DETECCIÓN DE CONFLICTOS EN ABIERTAS:
+ *   Se mantiene un mapa { userId → [pesos en oz] } (_abiertasByUser).
+ *   Si dos o más usuarios tienen sumas distintas de abiertas, se
+ *   activa alerta_conflicto y se guarda la alternativa en
+ *   stock_abierto_alternativo (backward compatible con la UI).
  *
  * @param {string} area - 'almacen' | 'barra1' | 'barra2'
  */
 export async function syncConteoAtomicoPorArea(area) {
     if (!window._db) {
-        console.info('[Atomico] Firebase no disponible — solo local.');
+        console.info('[TxConteo] Firebase no disponible — solo local.');
         return;
     }
     if (!navigator.onLine) {
@@ -735,105 +824,225 @@ export async function syncConteoAtomicoPorArea(area) {
         return;
     }
 
-    updateCloudSyncBadge('syncing');
+    const userId   = state.auditCurrentUser?.userId   || 'usr-anon';
+    const userName = state.auditCurrentUser?.userName  || 'Anónimo';
+
     const areaRef = window._db
         .collection('inventarioApp')
         .doc(window.FIRESTORE_DOC_ID)
         .collection('conteoAreas')
         .doc(area);
 
+    const productosConDatos = state.products.filter(p =>
+        state.auditoriaConteo[p.id]?.[area]
+    );
+
+    if (productosConDatos.length === 0) {
+        console.debug(`[TxConteo] Sin datos locales para área "${area}".`);
+        return;
+    }
+
+    const writeTs = Date.now();
+    updateCloudSyncBadge('tx');
+
     try {
-        const productosConDatos = state.products.filter(p =>
-            state.auditoriaConteo[p.id]?.[area]
-        );
-        if (productosConDatos.length === 0) {
-            updateCloudSyncBadge(_activeListeners.size > 0 ? 'listening' : 'ok');
-            return;
-        }
-
-        const writeTs = Date.now();
-
         await window._db.runTransaction(async tx => {
             const snap     = await tx.get(areaRef);
             const existing = snap.exists ? snap.data() : {};
-            const newData  = { _lastModified: writeTs };
+            const newData  = { _lastModified: writeTs, _area: area };
 
             for (const p of productosConDatos) {
-                const local   = state.auditoriaConteo[p.id][area];
-                const cloud   = existing[p.id] || {};
-                const cloudAb = cloud.abiertas || [];
+                const localConteo = state.auditoriaConteo[p.id][area];
+                const cloudEntry  = existing[p.id] || {};
 
-                newData[p.id] = {
-                    enteras:  (local.enteras || 0) + (cloud.enteras || 0),
-                    abiertas: local.abiertas || [],
-                };
+                // ── Fusionar _userEntradas: REEMPLAZAR, no acumular ──────────
+                // Clonar el mapa existente de otros usuarios y reemplazar solo
+                // la entrada de ESTE usuario. Preserva las de los demás.
+                const userEntradas = { ...(cloudEntry._userEntradas || {}) };
+                userEntradas[userId] = localConteo.enteras || 0;
 
-                // Detectar conflicto en botellas abiertas
-                if (cloudAb.length > 0) {
-                    const ls = (local.abiertas || []).reduce((a, b) => a + b, 0);
-                    const cs = cloudAb.reduce((a, b) => a + b, 0);
-                    if (Math.abs(ls - cs) > 0.01) {
-                        newData[p.id].stock_abierto_alternativo = cloudAb;
-                        newData[p.id].alerta_conflicto = true;
-                        console.warn(`[Atomico] Conflicto en abiertas — ${p.id}/${area}: local=${ls.toFixed(2)} cloud=${cs.toFixed(2)}`);
+                // Total = suma de TODAS las entradas del mapa (incluye este usuario)
+                const totalEnteras = Object.values(userEntradas)
+                    .reduce((acc, n) => acc + (typeof n === 'number' ? n : 0), 0);
+
+                // ── Fusionar _abiertasByUser: mismo patrón ────────────────────
+                const abiertasByUser = { ...(cloudEntry._abiertasByUser || {}) };
+                abiertasByUser[userId] = localConteo.abiertas || [];
+
+                // ── Detectar conflictos en abiertas ───────────────────────────
+                // Conflicto = dos o más usuarios con sumas de abiertas distintas
+                const userAbiertas = Object.entries(abiertasByUser);
+                let alertaConflicto   = false;
+                let stockAlternativo  = null;
+
+                if (userAbiertas.length >= 2) {
+                    const sums = userAbiertas.map(([, arr]) =>
+                        (Array.isArray(arr) ? arr : []).reduce((a, b) => a + b, 0)
+                    );
+                    const minSum = Math.min(...sums);
+                    const maxSum = Math.max(...sums);
+
+                    if (maxSum - minSum > 0.01) {
+                        alertaConflicto = true;
+                        // Stock alternativo = primer usuario diferente al actual
+                        const otherEntry = userAbiertas.find(([uid]) => uid !== userId);
+                        stockAlternativo = otherEntry ? otherEntry[1] : [];
+                        console.warn(
+                            `[TxConteo] Conflicto en abiertas — ${p.id}/${area}:`,
+                            `usuarios=[${userAbiertas.map(([uid]) => uid.slice(0,8)).join(',')}]`,
+                            `sums=[${sums.map(s => s.toFixed(2)).join(',')}]`
+                        );
                     }
                 }
+
+                // ── Construir entrada del producto en Firestore ───────────────
+                const productData = {
+                    // Totales visibles (usados por onSnapshot → _applyConteoAreaData)
+                    enteras:       totalEnteras,
+                    abiertas:      localConteo.abiertas || [], // abiertas de este usuario
+                    // Mapas de trazabilidad (para detección de conflictos y re-envíos)
+                    _userEntradas:   userEntradas,
+                    _abiertasByUser: abiertasByUser,
+                    _lastContadorId:   userId,
+                    _lastContadorName: userName,
+                    _lastTs:           writeTs,
+                    _totalContadores:  Object.keys(userEntradas).length,
+                };
+
+                if (alertaConflicto) {
+                    productData.alerta_conflicto          = true;
+                    productData.stock_abierto_alternativo = stockAlternativo;
+                } else {
+                    // Limpiar conflicto previo si ya no existe
+                    productData.alerta_conflicto          = false;
+                    productData.stock_abierto_alternativo = null;
+                }
+
+                newData[p.id] = productData;
             }
+
+            // Usar set(merge:true) para preservar productos de otras transacciones
+            // que podrían estar escribiendo en paralelo para otros productos
             tx.set(areaRef, newData, { merge: true });
         });
 
-        // Registrar el timestamp para bloquear el eco en el listener
+        // Registrar timestamp para bloquear eco en el listener onSnapshot
         _storeLocalAreaTs(`conteo:${area}`, writeTs);
 
         updateCloudSyncBadge(_activeListeners.size > 0 ? 'listening' : 'ok');
-        console.info(`[Atomico] ✓ Conteo sincronizado — área: ${area}`);
+        console.info(
+            `[TxConteo] ✓ Conteo de "${userName}" guardado en "${area}"`,
+            `(${productosConDatos.length} productos, userId=${userId.slice(0,12)}…)`
+        );
 
     } catch (err) {
-        console.error('[Atomico] Error en syncConteoAtomicoPorArea:', err);
+        console.error('[TxConteo] Error en transacción:', err.code || err.message, err);
         updateCloudSyncBadge('error');
         showNotification('⚠️ Error al sincronizar conteo — guardado localmente');
+        throw err; // re-lanzar para que audit.js pueda manejarlo
     }
 }
 
 // ═════════════════════════════════════════════════════════════
-//  ESCRITURA MULTIUSUARIO (conteo por dispositivo)
+//  [T4] syncConteoPorUsuarioToFirestore — TRANSACCIONAL
 // ═════════════════════════════════════════════════════════════
-
+/**
+ * Guarda el conteo individual de ESTE dispositivo en conteoPorUsuario.
+ *
+ * PROBLEMA RESUELTO (RC-4):
+ *   set(userPayload, {merge:true}) sin transacción tiene una ventana
+ *   de race condition si el mismo usuario envía dos veces rápido
+ *   (doble tap), o si dos llamadas de syncConteoPorUsuarioToFirestore
+ *   corren en paralelo por algún motivo.
+ *
+ * SOLUCIÓN:
+ *   runTransaction lee el documento actual, aplica SOLO los cambios
+ *   de este userId (preservando los de otros), y escribe el resultado
+ *   de forma atómica. Incluye un contador _version para detectar
+ *   re-envíos y registrar la evolución del conteo.
+ *
+ * @param {string} area - 'almacen' | 'barra1' | 'barra2'
+ */
 export async function syncConteoPorUsuarioToFirestore(area) {
     if (!window._db || !state.auditCurrentUser || !navigator.onLine) return;
 
-    const { userId } = state.auditCurrentUser;
+    const { userId, userName } = state.auditCurrentUser;
     const userRef    = window._db
         .collection('inventarioApp')
         .doc(window.FIRESTORE_DOC_ID)
         .collection('conteoPorUsuario')
         .doc(area);
 
-    const writeTs     = Date.now();
-    const userPayload = { _lastModified: writeTs };
+    const writeTs = Date.now();
 
+    // Recopilar los conteos de este usuario para esta área
+    const misConteos = {};
     state.products.forEach(p => {
         const byArea = state.auditoriaConteoPorUsuario[p.id]?.[area];
-        if (byArea?.[userId]) {
-            if (!userPayload[p.id]) userPayload[p.id] = {};
-            userPayload[p.id][userId] = byArea[userId];
-        }
+        if (byArea?.[userId]) misConteos[p.id] = byArea[userId];
     });
 
+    if (Object.keys(misConteos).length === 0) {
+        console.debug(`[TxUserConteo] Sin conteos propios para área "${area}". Omitiendo.`);
+        return;
+    }
+
     try {
-        await userRef.set(userPayload, { merge: true });
-        // Registrar timestamp para bloquear el eco
+        await window._db.runTransaction(async tx => {
+            const snap     = await tx.get(userRef);
+            const existing = snap.exists ? snap.data() : {};
+
+            // Clonar el documento preservando TODOS los otros usuarios
+            const merged = { ...existing, _lastModified: writeTs, _area: area };
+
+            // Escribir SOLO los productos de este usuario
+            Object.entries(misConteos).forEach(([prodId, conteo]) => {
+                if (!merged[prodId]) merged[prodId] = {};
+
+                const prevVersion = existing[prodId]?.[userId]?._version || 0;
+                merged[prodId][userId] = {
+                    ...conteo,
+                    userId:   userId,
+                    userName: userName,
+                    ts:       writeTs,
+                    _version: prevVersion + 1, // contador de re-envíos (debug)
+                };
+            });
+
+            tx.set(userRef, merged);
+        });
+
+        // Registrar timestamp para bloquear eco en el listener onSnapshot
         _storeLocalAreaTs(`user:${area}`, writeTs);
-        console.info(`[MultiUser] ✓ Conteo de ${state.auditCurrentUser.userName} subido — área: ${area}`);
+
+        console.info(
+            `[TxUserConteo] ✓ Conteo de "${userName}" guardado en conteoPorUsuario/${area}`,
+            `(${Object.keys(misConteos).length} productos)`
+        );
+
     } catch (err) {
-        console.warn('[MultiUser] Error en syncConteoPorUsuarioToFirestore:', err);
+        console.warn('[TxUserConteo] Error en transacción:', err.code || err.message, err);
+        // No re-lanzar: este sync es secundario y no debe bloquear el flujo
     }
 }
 
 // ═════════════════════════════════════════════════════════════
-//  RESET DE AUDITORÍA EN FIRESTORE
+//  [T6] resetConteoAtomicoEnFirestore — BATCH + TRANSACTION
 // ═════════════════════════════════════════════════════════════
-
+/**
+ * Reinicia todos los documentos de conteo en Firestore.
+ *
+ * PROBLEMA RESUELTO (RC-6):
+ *   Los deletes secuenciales con await entre cada uno dejan ventanas
+ *   donde los listeners onSnapshot pueden recibir documentos parcialmente
+ *   borrados y re-aplicar datos inconsistentes al estado local.
+ *
+ * SOLUCIÓN:
+ *   1. Batch atómico para los 6 deletes (conteoAreas x3 + conteoPorUsuario x3).
+ *      Si un delete falla, todos fallan. No hay estado parcial.
+ *   2. runTransaction para resetear auditoriaStatus en el doc principal,
+ *      asegurando que la actualización sea atómica con el _lastModified.
+ */
 export async function resetConteoAtomicoEnFirestore() {
     if (!window._db) return;
 
@@ -841,19 +1050,50 @@ export async function resetConteoAtomicoEnFirestore() {
     const baseRef = docRef.collection('conteoAreas');
     const userRef = docRef.collection('conteoPorUsuario');
 
+    const resetTs = Date.now();
+    updateCloudSyncBadge('tx');
+
     try {
-        for (const area of AREA_KEYS) {
-            await baseRef.doc(area).delete();
-            await userRef.doc(area).delete();
-            // Limpiar timestamps locales para que no bloqueen la próxima lectura
+        // ── Batch: todos los deletes en una única operación atómica ──────
+        const batch = window._db.batch();
+        AREA_KEYS.forEach(area => {
+            batch.delete(baseRef.doc(area));
+            batch.delete(userRef.doc(area));
+        });
+        await batch.commit();
+        console.info('[TxReset] Batch de deletes completado (6 documentos).');
+
+        // ── Transaction: resetear auditoriaStatus en el doc principal ────
+        await window._db.runTransaction(async tx => {
+            const snap = await tx.get(docRef);
+            if (!snap.exists) return;
+
+            // Usar dot-notation para resetear cada zona independientemente
+            tx.update(docRef, {
+                'auditoriaStatus.almacen': 'pendiente',
+                'auditoriaStatus.barra1':  'pendiente',
+                'auditoriaStatus.barra2':  'pendiente',
+                auditoriaConteo:           {},
+                _lastModified:             resetTs,
+            });
+        });
+
+        // Limpiar timestamps locales (para que los listeners procesen el reset)
+        _lastLocalWriteTs = resetTs;
+        AREA_KEYS.forEach(area => {
             _storeLocalAreaTs(`conteo:${area}`, 0);
             _storeLocalAreaTs(`user:${area}`,   0);
-        }
-        console.info('[Atomico] ✓ Conteo reseteado en Firestore.');
+        });
+
+        updateCloudSyncBadge(_activeListeners.size > 0 ? 'listening' : 'ok');
+        console.info('[TxReset] ✓ Auditoría reseteada en Firestore (batch + transaction).');
+
     } catch (err) {
-        console.warn('[Atomico] Error al resetear Firestore:', err);
+        console.error('[TxReset] Error al resetear Firestore:', err.code || err.message, err);
+        updateCloudSyncBadge('error');
+        throw err;
     }
 }
 
-// ── Bindings globales (requeridos por el sidebar HTML) ────────
+// ── Binding global (sidebar HTML) ────────────────────────────
 window.syncToCloud = syncToCloud;
