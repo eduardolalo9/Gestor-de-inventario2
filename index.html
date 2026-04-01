@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-role="anonymous">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -14,10 +14,10 @@
         })();
     </script>
 
-    <meta name="description" content="Sistema de control de inventario para barra — gestión de productos, pedidos y conteo físico.">
+    <meta name="description" content="BarInventory — App de Inventarios: gestión de productos, pedidos, conteo físico y auditoría ciega con control de roles.">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://www.gstatic.com https://kit.fontawesome.com https://use.fontawesome.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://use.fontawesome.com https://kit.fontawesome.com; font-src https://fonts.gstatic.com https://cdnjs.cloudflare.com https://use.fontawesome.com https://kit.fontawesome.com data:; img-src 'self' data: https:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://firestore.googleapis.com https://securetoken.googleapis.com https://identitytoolkit.googleapis.com https://firebase.googleapis.com; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%A6%3C/text%3E%3C/svg%3E">
-    <title>BarInventory — Control de Inventario</title>
+    <title>BarInventory — App de Inventarios</title>
 
     <!-- Fuentes -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -141,6 +141,15 @@
             </div>
             <div id="sbFoot">
                 <span id="sbUserEmail"></span>
+                <!-- Badge de rol — actualizado por auth-roles.js -->
+                <span id="sbRoleBadge"
+                      style="display:none;align-items:center;justify-content:center;
+                             font-family:'IBM Plex Sans',sans-serif;
+                             font-size:0.65rem;font-weight:700;letter-spacing:0.06em;
+                             text-transform:uppercase;
+                             padding:3px 10px;border-radius:6px;margin-bottom:6px;
+                             border:1px solid rgba(148,163,184,0.25);
+                             width:100%;"></span>
                 <div id="cloudSyncBadge" style="display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Sans',sans-serif;font-size:.68rem;font-weight:600;padding:5px 10px;border-radius:8px;margin-bottom:8px;border:1px solid rgba(80,81,106,0.4);color:#8b8ca8;background:rgba(80,81,106,0.12);transition:all .3s ease;">☁️ Sin Firebase</div>
                 <button type="button" onclick="toggleTheme(); sbClose();" class="sb-item" style="width:100%;margin-bottom:6px;" id="sbThemeBtn">
                     <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
@@ -343,7 +352,12 @@
 
     <!--
         MÓDULOS ES — Punto de entrada único.
-        app.js importa en cadena: state → constants → ui → storage → sync → products → audit → render → auth
+        Cadena de imports con RBAC (Fase 1):
+          app.js
+            ├── auth.js → auth-roles.js → sync.js
+            ├── state.js  (añadidos: currentUser, userRole, userProfile)
+            ├── products.js (respeta window.canWrite() para UI condicional)
+            └── render.js   (respeta window.isAdmin() para botones admin)
         El atributo type="module" activa: defer automático, scope léxico, strict mode.
     -->
     <script type="module" src="js/app.js"></script>
