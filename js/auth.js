@@ -1,26 +1,35 @@
 /**
- * js/auth.js
+ * js/auth.js — v2 (Fase 1: RBAC)
  * ══════════════════════════════════════════════════════════════
- * Autenticación Firebase Email/Password.
+ * Autenticación Firebase Email/Password con control de roles.
  *
- * Responsabilidades:
- *   • onAuthStateChanged → mostrar login o app
- *   • Al hacer login  → startRealtimeListeners()
- *   • Al hacer logout → stopRealtimeListeners()
- *   • Manejo de errores del formulario con mensajes en español
+ * CAMBIOS RESPECTO A v1:
+ *   • Ya NO llama a startRealtimeListeners() directamente.
+ *     Esa responsabilidad se delega a auth-roles.js, que lo invoca
+ *     solo después de confirmar el rol del usuario.
+ *   • Al hacer login → initRoles(user) [auth-roles.js]
+ *     initRoles internamente llama startRealtimeListeners().
+ *   • Al hacer logout → cleanupRoles() + stopRealtimeListeners()
  *
- * Los listeners de Firestore se inician AQUÍ (no en app.js) porque
- * deben arrancar solo cuando hay un usuario autenticado y detenerse
- * limpiamente cuando se cierra sesión, evitando fugas de memoria.
+ * FLUJO COMPLETO:
+ *   onAuthStateChanged(user)
+ *     ├─ user:   showApp(user)
+ *     │           └─ initRoles(user) ──→ /usuarios/{uid}
+ *     │                                   └─ startRealtimeListeners()
+ *     └─ !user:  cleanupRoles()
+ *                stopRealtimeListeners()
+ *                showLogin()
  * ══════════════════════════════════════════════════════════════
  */
 
-import { startRealtimeListeners, stopRealtimeListeners } from './sync.js';
+import { stopRealtimeListeners }          from './sync.js';
+import { initRoles, cleanupRoles }        from './auth-roles.js';
 
 // ── Helper: acceso rápido a elementos del DOM ─────────────────
 const $id = id => document.getElementById(id);
 
-// ── Pantallas de auth ─────────────────────────────────────────
+// ─── Pantallas de auth ─────────────────────────────────────────
+
 function showLogin() {
     $id('authLoadingScreen').classList.add('auth-hidden');
     $id('loginScreen').classList.remove('auth-hidden');
@@ -32,46 +41,46 @@ function showApp(user) {
     $id('authLoadingScreen').classList.add('auth-hidden');
     $id('loginScreen').classList.add('auth-hidden');
     $id('appWrapper').classList.add('auth-visible');
-
-    // Mostrar email del usuario en el sidebar
-    const emailEl = $id('sbUserEmail');
-    if (emailEl && user) emailEl.textContent = user.email;
-
     console.info('[Auth] ✓ Usuario autenticado:', user?.email || 'N/A');
 }
 
 // ═════════════════════════════════════════════════════════════
 //  INICIALIZACIÓN — onAuthStateChanged
-//  Punto central de conexión entre auth y listeners Firestore.
 // ═════════════════════════════════════════════════════════════
 
 export function initAuth() {
     if (!window._auth) {
-        console.warn('[Auth] Firebase Auth no disponible — mostrando app sin autenticación.');
+        console.warn('[Auth] Firebase Auth no disponible — modo dev sin autenticación.');
         $id('authLoadingScreen').classList.add('auth-hidden');
         $id('appWrapper').classList.add('auth-visible');
-
-        // Sin Firebase: iniciar listeners solo si _db existe
+        // Sin Firebase: iniciar roles y listeners directamente
         if (window._db) {
-            startRealtimeListeners();
+            initRoles(null).catch(e => console.warn('[Auth] initRoles sin usuario:', e));
         }
         return;
     }
 
-    window._auth.onAuthStateChanged(function(user) {
+    window._auth.onAuthStateChanged(async function(user) {
         if (user) {
+            // 1. Mostrar la app inmediatamente (optimistic update)
             showApp(user);
-            // ─── LOGIN: iniciar listeners en tiempo real ───────────
-            // startRealtimeListeners es idempotente:
-            // si se llama dos veces solo reinicia, no duplica listeners.
-            startRealtimeListeners();
-            console.info('[Auth] Listeners en tiempo real iniciados para:', user.email);
+
+            try {
+                // 2. Obtener y aplicar el rol (ANTES de renderizar contenido sensible).
+                //    initRoles() también llama startRealtimeListeners() internamente.
+                const role = await initRoles(user);
+                console.info(`[Auth] Rol confirmado: ${role} — listeners activos.`);
+            } catch (err) {
+                // initRoles tiene su propio fallback; esto no debería ocurrir.
+                console.error('[Auth] initRoles lanzó excepción inesperada:', err);
+            }
+
         } else {
-            showLogin();
-            // ─── LOGOUT: detener listeners y liberar recursos ──────
-            // stopRealtimeListeners llama unsub() en cada listener activo.
+            // LOGOUT: limpiar rol PRIMERO, luego detener listeners
+            cleanupRoles();
             stopRealtimeListeners();
-            console.info('[Auth] Listeners detenidos — sesión cerrada.');
+            showLogin();
+            console.info('[Auth] Sesión cerrada — listeners y rol limpiados.');
         }
     });
 }
@@ -103,28 +112,25 @@ export async function handleLogin() {
     const btn      = $id('loginBtn');
     const btnText  = $id('loginBtnText');
 
-    // Limpiar error anterior
     errEl.classList.remove('visible');
 
-    // Validación básica en cliente
     if (!email || !password) {
         errEl.textContent = 'Por favor ingresa tu correo y contraseña.';
         errEl.classList.add('visible');
         return;
     }
 
-    // Mostrar estado de carga en el botón
-    btn.disabled = true;
+    btn.disabled        = true;
     btnText.textContent = 'Iniciando sesión…';
-    const spinner = document.createElement('span');
-    spinner.className = 'login-spinner';
+    const spinner       = document.createElement('span');
+    spinner.className   = 'login-spinner';
     btn.appendChild(spinner);
 
     try {
         await window._auth.signInWithEmailAndPassword(email, password);
-        // onAuthStateChanged se encarga de mostrar la app y arrancar listeners
+        // onAuthStateChanged se encarga del resto (initRoles, listeners, UI)
     } catch (err) {
-        console.warn('[Auth] Error al iniciar sesión:', err.code, err.message);
+        console.warn('[Auth] Error al iniciar sesión:', err.code);
         errEl.textContent = AUTH_ERROR_MESSAGES[err.code] || `Error: ${err.message || err.code}`;
         errEl.classList.add('visible');
     } finally {
@@ -142,10 +148,11 @@ export async function signOutUser() {
     if (!window._auth) return;
     try {
         window.sbClose?.();
-        // stopRealtimeListeners se llama automáticamente en onAuthStateChanged
+        // cleanupRoles() + stopRealtimeListeners() se llaman
+        // automáticamente en onAuthStateChanged cuando user = null
         await window._auth.signOut();
         window.showNotification?.('👋 Sesión cerrada correctamente.');
-        console.info('[Auth] Sesión cerrada.');
+        console.info('[Auth] signOut ejecutado.');
     } catch (err) {
         console.error('[Auth] Error al cerrar sesión:', err);
         window.showNotification?.('❌ Error al cerrar sesión.');
@@ -153,5 +160,5 @@ export async function signOutUser() {
 }
 
 // ── Bindings globales ─────────────────────────────────────────
-window.handleLogin  = handleLogin;
-window.signOutUser  = signOutUser;
+window.handleLogin = handleLogin;
+window.signOutUser = signOutUser;

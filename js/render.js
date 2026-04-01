@@ -86,31 +86,68 @@ export function switchTab(tab) {
 }
 
 /* ── TAB: INICIO ─────────────────────────────────────────────── */
+/**
+ * renderInicioTab()
+ *
+ * Matriz de visibilidad en este tab:
+ * ┌──────────────────────────────────┬───────┬──────┐
+ * │ Elemento                         │ admin │ user │
+ * ├──────────────────────────────────┼───────┼──────┤
+ * │ Buscador + filtro de grupo       │  ✓    │  ✓   │
+ * │ Botón "+ Producto"               │  ✓    │  ✗   │
+ * │ Lista de productos + stock       │  ✓    │  ✓   │
+ * │ Botón 🛒 Agregar al carrito      │  ✓    │  ✓   │
+ * │ Botón ✏️ Editar producto         │  ✓    │  ✗   │
+ * │ Botón 🗑 Eliminar producto       │  ✓    │  ✗   │
+ * │ Botón "Eliminar todos"           │  ✓    │  ✗   │
+ * └──────────────────────────────────┴───────┴──────┘
+ */
 function renderInicioTab() {
-    const filtered = filterByGroup();
-    const groups   = getAvailableGroups();
+    const isAdmin = state.userRole === 'admin';
+
+    const filtered      = filterByGroup();
+    const groups        = getAvailableGroups();
     const totalProducts = state.products.length;
-    const totalStock    = state.products.reduce((s,p) => s + getTotalStock(p), 0);
+    const totalStock    = state.products.reduce((s, p) => s + getTotalStock(p), 0);
 
     let html = '<div class="space-y-4">';
-    // Stats cards
+
+    // ── Stats cards (iguales para todos los roles) ─────────────
     html += '<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">';
     html += _statCard('📦', 'Productos', totalProducts, 'var(--accent)');
     html += _statCard('📊', 'Stock total', totalStock.toFixed(1), 'var(--green)');
-    html += _statCard('🛒', 'En carrito', state.cart.reduce((s,i)=>s+i.quantity,0).toFixed(1), 'var(--amber)');
+    html += _statCard('🛒', 'En carrito', state.cart.reduce((s, i) => s + i.quantity, 0).toFixed(1), 'var(--amber)');
     html += _statCard('📋', 'Pedidos', state.orders.length, 'var(--sky)');
     html += '</div>';
 
-    // Filtros
+    // ── Barra de filtros ───────────────────────────────────────
     html += '<div class="bg-white rounded-xl p-3 shadow-md flex flex-wrap gap-2 items-center">';
-    html += '<input type="text" placeholder="Buscar..." value="' + escapeHtml(state.searchTerm) + '" oninput="window.updateSearchTerm(this.value)" class="flex-1 min-w-32 px-3 py-2 bg-white text-gray-900 border border-gray-200 rounded text-sm">';
+
+    // Buscador — ambos roles
+    html += `<input type="text" placeholder="Buscar..."
+        value="${escapeHtml(state.searchTerm)}"
+        oninput="window.updateSearchTerm(this.value)"
+        class="flex-1 min-w-32 px-3 py-2 bg-white text-gray-900 border border-gray-200 rounded text-sm">`;
+
+    // Filtro de grupo — ambos roles
     html += '<select onchange="window.updateSelectedGroup(this.value)" class="px-2 py-2 bg-white text-gray-900 border border-gray-200 rounded text-sm">';
-    groups.forEach(g => { html += `<option value="${escapeHtml(g)}" ${state.selectedGroup===g?'selected':''}>${escapeHtml(g)}</option>`; });
+    groups.forEach(g => {
+        html += `<option value="${escapeHtml(g)}" ${state.selectedGroup === g ? 'selected' : ''}>${escapeHtml(g)}</option>`;
+    });
     html += '</select>';
-    html += '<button onclick="window.openProductModal()" class="px-3 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded text-sm font-semibold">+ Producto</button>';
+
+    // "+ Producto" — SOLO ADMIN
+    if (isAdmin) {
+        html += `<button
+            onclick="window.openProductModal()"
+            class="px-3 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded text-sm font-semibold">
+            + Producto
+        </button>`;
+    }
+
     html += '</div>';
 
-    // Lista de productos
+    // ── Lista de productos ─────────────────────────────────────
     if (filtered.length === 0) {
         html += '<div class="bg-white rounded-xl p-8 text-center shadow-md"><p class="text-gray-500">No hay productos que mostrar</p></div>';
     } else {
@@ -118,34 +155,216 @@ function renderInicioTab() {
         filtered.forEach((p, idx) => {
             const total = getTotalStock(p);
             const delay = Math.min(idx * 30, 300);
+
             html += `<div class="bg-white rounded-xl p-3 shadow-md" style="animation:cardIn 0.2s ease-out ${delay}ms both">`;
             html += `<div class="flex items-center gap-3">`;
             html += `<div class="flex-1 min-w-0">`;
-            html += `<div class="flex items-center gap-2 flex-wrap"><span class="font-semibold text-gray-900 text-sm">${escapeHtml(p.name)}</span><span class="text-xs px-2 py-1 bg-purple-100 rounded text-purple-600">${escapeHtml(p.group||'General')}</span></div>`;
-            html += `<div class="text-xs text-gray-500 mt-1">${escapeHtml(p.id)} · ${escapeHtml(p.unit||'')} · Total: <strong>${total.toFixed(2)}</strong></div>`;
+            html += `<div class="flex items-center gap-2 flex-wrap">
+                <span class="font-semibold text-gray-900 text-sm">${escapeHtml(p.name)}</span>
+                <span class="text-xs px-2 py-1 bg-purple-100 rounded text-purple-600">${escapeHtml(p.group || 'General')}</span>
+            </div>`;
+            html += `<div class="text-xs text-gray-500 mt-1">
+                ${escapeHtml(p.id)} · ${escapeHtml(p.unit || '')} · Total: <strong>${total.toFixed(2)}</strong>
+            </div>`;
             html += `</div>`;
+
+            // ── Botones de acción por producto ─────────────────
             html += `<div class="flex gap-2 flex-shrink-0">`;
-            html += `<button onclick="window.addToCart('${escapeHtml(p.id)}')" class="p-2 bg-gradient-to-br from-purple-500 to-blue-500 text-white rounded-lg text-xs" title="Agregar al carrito"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg></button>`;
-            html += `<button onclick="window.editProduct('${escapeHtml(p.id)}')" class="p-2 bg-gradient-to-br from-blue-500 to-purple-500 text-white rounded-lg text-xs" title="Editar"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg></button>`;
-            html += `<button onclick="window.deleteProduct('${escapeHtml(p.id)}')" class="p-2 bg-gradient-to-br from-red-500 to-orange-500 text-white rounded-lg text-xs" title="Eliminar"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>`;
+
+            // 🛒 Agregar al carrito — ambos roles
+            html += `<button
+                onclick="window.addToCart('${escapeHtml(p.id)}')"
+                class="p-2 bg-gradient-to-br from-purple-500 to-blue-500 text-white rounded-lg text-xs"
+                title="Agregar al carrito">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/>
+                </svg>
+            </button>`;
+
+            // ✏️ Editar + 🗑 Eliminar — SOLO ADMIN
+            if (isAdmin) {
+                html += `<button
+                    onclick="window.editProduct('${escapeHtml(p.id)}')"
+                    class="p-2 bg-gradient-to-br from-blue-500 to-purple-500 text-white rounded-lg text-xs"
+                    title="Editar producto">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+                    </svg>
+                </button>`;
+
+                html += `<button
+                    onclick="window.deleteProduct('${escapeHtml(p.id)}')"
+                    class="p-2 bg-gradient-to-br from-red-500 to-orange-500 text-white rounded-lg text-xs"
+                    title="Eliminar producto">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                    </svg>
+                </button>`;
+            }
+
             html += `</div></div>`;
-            // Stock por área
+
+            // Stock por área — ambos roles
             html += `<div class="flex gap-2 mt-2">`;
-            AREA_KEYS.forEach(area => { html += `<span class="text-xs px-2 py-1 rounded" style="background:var(--surface);color:var(--txt-secondary)">${AREAS[area]}: <strong>${(p.stockByArea&&p.stockByArea[area]!==undefined?p.stockByArea[area]:0).toFixed(2)}</strong></span>`; });
+            AREA_KEYS.forEach(area => {
+                const val = p.stockByArea && p.stockByArea[area] !== undefined ? p.stockByArea[area] : 0;
+                html += `<span class="text-xs px-2 py-1 rounded" style="background:var(--surface);color:var(--txt-secondary)">
+                    ${AREAS[area]}: <strong>${val.toFixed(2)}</strong>
+                </span>`;
+            });
             html += '</div></div>';
         });
         html += '</div>';
     }
-    if (state.products.length > 0) {
-        html += `<button onclick="window.deleteAllProducts()" class="w-full py-2 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-lg text-sm font-semibold opacity-70 hover:opacity-100 transition-opacity">Eliminar todos los productos</button>`;
+
+    // ── "Eliminar todos" — SOLO ADMIN ─────────────────────────
+    if (isAdmin && state.products.length > 0) {
+        html += `<button
+            onclick="window.deleteAllProducts()"
+            class="w-full py-2 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-lg text-sm font-semibold opacity-70 hover:opacity-100 transition-opacity">
+            Eliminar todos los productos
+        </button>`;
     }
+
     html += '</div>';
     return html;
 }
 
-function _statCard(icon, label, value, color) {
-    return `<div class="bg-white rounded-xl p-3 shadow-md"><div class="text-xl mb-1">${icon}</div><div class="text-xs text-gray-500">${label}</div><div class="text-lg font-bold" style="color:${color}">${value}</div></div>`;
+// ═════════════════════════════════════════════════════════════
+//  TAB: HISTORIA
+//  Sustituye la función completa renderHistoriaTab() en render.js
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * renderHistoriaTab()
+ *
+ * Matriz de visibilidad en este tab:
+ * ┌──────────────────────────────────┬───────┬──────┐
+ * │ Elemento                         │ admin │ user │
+ * ├──────────────────────────────────┼───────┼──────┤
+ * │ Selector de área                 │  ✓    │  ✓   │
+ * │ "💾 Guardar inventario"          │  ✓    │  ✓   │ ← ambos pueden guardar conteos
+ * │ "📊 Excel" (exportar)            │  ✓    │  ✗   │
+ * │ "🗑 Reset" (borrar todo)         │  ✓    │  ✗   │
+ * │ Lista de inventarios guardados   │  ✓    │  ✓   │
+ * │ Botón compartir WhatsApp         │  ✓    │  ✓   │
+ * │ Botón eliminar inventario        │  ✓    │  ✗   │
+ * └──────────────────────────────────┴───────┴──────┘
+ */
+function renderHistoriaTab() {
+    const isAdmin = state.userRole === 'admin';
+
+    let html = '<div class="space-y-4">';
+
+    // ── Guardar conteo actual ──────────────────────────────────
+    html += '<div class="bg-white rounded-xl p-4 shadow-md">';
+    html += '<h3 class="text-lg font-bold text-gray-900 mb-3">Guardar conteo actual</h3>';
+
+    // Selector de área — ambos roles
+    html += '<div class="flex gap-2 flex-wrap mb-3">';
+    AREA_KEYS.forEach(area => {
+        const isActive = state.selectedArea === area;
+        html += `<button
+            onclick="window.switchArea('${area}')"
+            class="area-btn px-3 py-2 rounded-lg text-sm font-medium border ${
+                isActive
+                    ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white border-transparent'
+                    : 'border-gray-200 text-gray-600'
+            }">
+            ${AREAS[area]}
+        </button>`;
+    });
+    html += '</div>';
+
+    // "💾 Guardar inventario" — ambos roles
+    // Los contadores (user) deben poder guardar su snapshot de conteo.
+    html += `<button
+        onclick="window.saveInventory('${state.selectedArea}')"
+        class="w-full py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg font-semibold text-sm">
+        💾 Guardar inventario de ${AREAS[state.selectedArea]}
+    </button>`;
+
+    html += '</div>';
+
+    // ── Acciones de administrador ──────────────────────────────
+    // "📊 Excel" y "🗑 Reset" solo son visibles para admin.
+    // Se omite el bloque completo si el rol es 'user', en lugar de
+    // renderizar botones deshabilitados (cleaner UX, menos confusión).
+    if (isAdmin) {
+        html += `<div class="flex gap-2 mb-2">
+            <button
+                onclick="window.exportToExcel('INVENTARIO')"
+                class="flex-1 py-2 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg text-sm font-semibold">
+                📊 Excel
+            </button>
+            <button
+                onclick="window.resetAllInventario()"
+                class="flex-1 py-2 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-lg text-sm font-semibold">
+                🗑 Reset
+            </button>
+        </div>`;
+    }
+
+    // ── Listado de inventarios guardados ───────────────────────
+    if (state.inventories.length === 0) {
+        html += '<div class="bg-white rounded-xl p-8 text-center shadow-md"><p class="text-gray-500">No hay inventarios guardados</p></div>';
+    } else {
+        html += '<div class="space-y-3">';
+        state.inventories.forEach((inv, idx) => {
+            const delay = Math.min(idx * 50, 400);
+            html += `<div class="bg-white rounded-xl p-4 shadow-md" style="animation:tabContentIn 0.3s ease-out ${delay}ms both">`;
+
+            html += `<div class="flex justify-between items-start mb-2">
+                <div>
+                    <h3 class="font-bold text-gray-900 text-sm">${escapeHtml(inv.id)}</h3>
+                    <p class="text-xs text-gray-500">${escapeHtml(inv.date)} · ${escapeHtml(AREAS[inv.area] || inv.area)}</p>
+                </div>`;
+
+            html += `<div class="flex gap-2">`;
+
+            // Compartir WhatsApp — ambos roles
+            html += `<button
+                onclick="window.shareInventoryWhatsApp('${escapeHtml(inv.id)}')"
+                class="p-2 bg-gradient-to-br from-green-500 to-emerald-500 text-white rounded-lg"
+                title="Compartir por WhatsApp">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                </svg>
+            </button>`;
+
+            // Eliminar inventario — SOLO ADMIN
+            if (isAdmin) {
+                html += `<button
+                    onclick="window.deleteInventory('${escapeHtml(inv.id)}')"
+                    class="p-2 bg-gradient-to-br from-red-500 to-orange-500 text-white rounded-lg"
+                    title="Eliminar registro">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                    </svg>
+                </button>`;
+            }
+
+            html += `</div></div>`;
+
+            html += `<p class="text-xs text-gray-600">
+                Total: <strong>${(inv.totalProducts || 0).toFixed(2)}</strong>
+                · ${(inv.products || []).length} productos
+            </p>`;
+
+            html += '</div>';
+        });
+        html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
 }
+
 
 /* ── TAB: PRODUCTOS ──────────────────────────────────────────── */
 function renderProductosTab() { return renderInicioTab(); } // Alias con mismo render
@@ -167,7 +386,8 @@ function renderPedidosTab() {
     });
     html += '</div>';
     if (state.cart.length > 0) {
-        html += `<button onclick="window.openOrderModal()" class="w-full mt-3 py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg font-semibold text-sm">🛒 Ver carrito (${state.cart.reduce((s,i)=>s+i.quantity,0).toFixed(1)} items) y generar pedido</button>`;
+        // BOTÓN GENERAR PEDIDO / VER CARRITO (ADMIN ONLY - Opcional, pero te lo dejo como lo pediste)
+        html += `<button onclick="window.openOrderModal()" class="admin-only w-full mt-3 py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg font-semibold text-sm">🛒 Ver carrito (${state.cart.reduce((s,i)=>s+i.quantity,0).toFixed(1)} items) y generar pedido</button>`;
     }
     html += '</div>';
     // Historial de pedidos
@@ -178,7 +398,13 @@ function renderPedidosTab() {
             const delay = Math.min(idx * 50, 400);
             html += `<div class="bg-white rounded-2xl p-4 shadow-md" style="animation:tabContentIn 0.3s ease-out ${delay}ms both">`;
             html += `<div class="flex justify-between items-start mb-3"><div><h3 class="text-base font-bold text-gray-900">${escapeHtml(order.id)}</h3><p class="text-sm text-gray-600">Proveedor: ${escapeHtml(order.supplier)}</p><p class="text-xs text-gray-500">Fecha: ${escapeHtml(order.date)}</p>${order.deliveryDate?`<p class="text-xs text-gray-500">Entrega: ${escapeHtml(order.deliveryDate)}</p>`:''}</div>`;
-            html += `<div class="flex gap-2"><button onclick="window.shareOrderWhatsApp('${escapeHtml(order.id)}')" class="p-2 bg-gradient-to-br from-green-500 to-emerald-500 text-white rounded-xl"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg></button><button onclick="window.deleteOrder('${escapeHtml(order.id)}')" class="p-2 bg-gradient-to-br from-red-500 to-orange-500 text-white rounded-xl"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></div></div>`;
+            
+            // BOTONES COMPARTIR Y ELIMINAR PEDIDO (El de eliminar es ADMIN ONLY)
+            html += `<div class="flex gap-2">`;
+            html += `<button onclick="window.shareOrderWhatsApp('${escapeHtml(order.id)}')" class="p-2 bg-gradient-to-br from-green-500 to-emerald-500 text-white rounded-xl"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg></button>`;
+            html += `<button onclick="window.deleteOrder('${escapeHtml(order.id)}')" class="admin-only p-2 bg-gradient-to-br from-red-500 to-orange-500 text-white rounded-xl"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>`;
+            html += `</div></div>`;
+            
             html += '<div class="overflow-x-auto"><table class="w-full"><thead class="bg-gradient-to-r from-purple-600 to-blue-600"><tr><th class="px-3 py-2 text-left text-xs text-white">Producto</th><th class="px-3 py-2 text-center text-xs text-white">Unidad</th><th class="px-3 py-2 text-center text-xs text-white">Cantidad</th></tr></thead><tbody class="divide-y divide-gray-200">';
             order.products.forEach(p => { html += `<tr><td class="px-3 py-2 text-gray-900 text-sm">${escapeHtml(p.name)}</td><td class="px-3 py-2 text-center text-gray-600 text-sm">${escapeHtml(p.unit)}</td><td class="px-3 py-2 text-center font-semibold text-gray-900 text-sm">${p.quantity}</td></tr>`; });
             html += `</tbody></table></div><div class="mt-2 text-right"><span class="text-sm font-bold text-gray-900">Total: ${(order.total||0).toFixed(2)}</span></div>`;
@@ -228,9 +454,10 @@ function renderAuditoriaSeleccion() {
         html += '</div>';
     });
     html += '</div>';
-    // Botón exportar (si todas están completas)
+    
+    // BOTÓN EXPORTAR AUDITORÍA (ADMIN ONLY)
     if (todasCompletas) {
-        html += '<button onclick="window.exportarAuditoriaExcel()" class="audit-export-btn"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>Exportar Auditoría a Excel</button>';
+        html += '<button onclick="window.exportarAuditoriaExcel()" class="admin-only audit-export-btn"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>Exportar Auditoría a Excel</button>';
     }
     html += '</div>';
     return html;
@@ -282,9 +509,15 @@ function renderHistoriaTab() {
         html += `<button onclick="window.switchArea('${area}')" class="area-btn px-3 py-2 rounded-lg text-sm font-medium border ${isActive?'bg-gradient-to-r from-purple-500 to-blue-500 text-white border-transparent':'border-gray-200 text-gray-600'}">${AREAS[area]}</button>`;
     });
     html += '</div>';
-    html += `<button onclick="window.saveInventory('${state.selectedArea}')" class="w-full py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg font-semibold text-sm">💾 Guardar inventario de ${AREAS[state.selectedArea]}</button>`;
+    html += `<button onclick="window.saveInventory('${state.selectedArea}')" class="w-full py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg font-semibold text-sm">💾 Guardar inventario de ${AREAS[state.selectedArea]}</button>';
     html += '</div>';
-    html += '<div class="flex gap-2 mb-2"><button onclick="window.exportToExcel(\'INVENTARIO\')" class="flex-1 py-2 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg text-sm font-semibold">📊 Excel</button><button onclick="window.resetAllInventario()" class="flex-1 py-2 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-lg text-sm font-semibold">🗑 Reset</button></div>';
+    
+    // BOTONES EXCEL Y RESET (Reset es ADMIN ONLY)
+    html += '<div class="flex gap-2 mb-2">';
+    html += '<button onclick="window.exportToExcel(\'INVENTARIO\')" class="flex-1 py-2 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg text-sm font-semibold">📊 Excel</button>';
+    html += '<button onclick="window.resetAllInventario()" class="admin-only flex-1 py-2 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-lg text-sm font-semibold">🗑 Reset</button>';
+    html += '</div>';
+    
     if (state.inventories.length === 0) {
         html += '<div class="bg-white rounded-xl p-8 text-center shadow-md"><p class="text-gray-500">No hay inventarios guardados</p></div>';
     } else {
@@ -293,8 +526,13 @@ function renderHistoriaTab() {
             const delay = Math.min(idx * 50, 400);
             html += `<div class="bg-white rounded-xl p-4 shadow-md" style="animation:tabContentIn 0.3s ease-out ${delay}ms both">`;
             html += `<div class="flex justify-between items-start mb-2"><div><h3 class="font-bold text-gray-900 text-sm">${escapeHtml(inv.id)}</h3><p class="text-xs text-gray-500">${escapeHtml(inv.date)} · ${escapeHtml(AREAS[inv.area]||inv.area)}</p></div>`;
-            html += `<div class="flex gap-2"><button onclick="window.shareInventoryWhatsApp('${escapeHtml(inv.id)}')" class="p-2 bg-gradient-to-br from-green-500 to-emerald-500 text-white rounded-lg"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg></button>`;
-            html += `<button onclick="window.deleteInventory('${escapeHtml(inv.id)}')" class="p-2 bg-gradient-to-br from-red-500 to-orange-500 text-white rounded-lg"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></div></div>`;
+            
+            // BOTONES COMPARTIR Y ELIMINAR INVENTARIO INDIVIDUAL (Eliminar es ADMIN ONLY)
+            html += `<div class="flex gap-2">`;
+            html += `<button onclick="window.shareInventoryWhatsApp('${escapeHtml(inv.id)}')" class="p-2 bg-gradient-to-br from-green-500 to-emerald-500 text-white rounded-lg"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg></button>`;
+            html += `<button onclick="window.deleteInventory('${escapeHtml(inv.id)}')" class="admin-only p-2 bg-gradient-to-br from-red-500 to-orange-500 text-white rounded-lg"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>`;
+            html += `</div></div>`;
+            
             html += `<p class="text-xs text-gray-600">Total: <strong>${(inv.totalProducts||0).toFixed(2)}</strong> · ${(inv.products||[]).length} productos</p>`;
             html += '</div>';
         });

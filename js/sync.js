@@ -483,17 +483,50 @@ function _subscribeConteoPorUsuario() {
 // ═════════════════════════════════════════════════════════════
 
 export function startRealtimeListeners() {
-    if (!window._db) { console.warn('[Snapshot] Firebase no disponible.'); return; }
-    if (_activeListeners.size > 0) { console.info('[Snapshot] Reiniciando…'); stopRealtimeListeners(); }
-    console.info('[Snapshot] ══ Iniciando 10 listeners en tiempo real ══');
-    _subscribeMainDoc();
-    _subscribeStockAreas();
-    _subscribeConteoAreas();
-    _subscribeConteoPorUsuario();
-    updateCloudSyncBadge('listening');
-    console.info(`[Snapshot] ✓ ${_activeListeners.size} listeners activos.`);
-}
+    if (!window._db) {
+        console.warn('[Snapshot] Firebase no disponible — listeners no iniciados.');
+        return;
+    }
 
+    // Idempotente: si ya hay listeners activos, limpiar primero.
+    if (_activeListeners.size > 0) {
+        console.info('[Snapshot] Reiniciando listeners…');
+        stopRealtimeListeners();
+    }
+
+    // ── Determinar el conjunto de listeners según el rol ──────────
+    // state.userRole puede ser 'admin', 'user' o null.
+    // null ocurre si Firebase Auth no está configurado (modo dev);
+    // en ese caso se inician todos los listeners como admin.
+    const role    = state.userRole;
+    const isAdmin = (role === 'admin' || role === null);
+
+    if (isAdmin) {
+        // ── ADMIN: 10 listeners — acceso completo ─────────────────
+        console.info('[Snapshot] ══ Iniciando 10 listeners (rol: admin) ══');
+
+        _subscribeMainDoc();           // [1]    doc principal
+        _subscribeStockAreas();        // [2-4]  conteo operativo
+        _subscribeConteoAreas();       // [5-7]  auditoría atómica
+        _subscribeConteoPorUsuario();  // [8-10] multiusuario
+
+    } else {
+        // ── USER: 4 listeners — solo catálogo + stock operativo ────
+        // _subscribeConteoAreas y _subscribeConteoPorUsuario
+        // NO se inician para preservar la ceguera de auditoría.
+        console.info('[Snapshot] ══ Iniciando 4 listeners (rol: user, modo ciego) ══');
+        console.info('[Snapshot] Listeners de auditoría OMITIDOS (conteoAreas, conteoPorUsuario).');
+
+        _subscribeMainDoc();    // [1]   doc principal (productos, cart, auditoriaStatus)
+        _subscribeStockAreas(); // [2-4] conteo operativo (inventario diario)
+
+        // ✗ _subscribeConteoAreas()       → OMITIDO (totales de auditoría ciega)
+        // ✗ _subscribeConteoPorUsuario()  → OMITIDO (conteos individuales de otros)
+    }
+
+    updateCloudSyncBadge('listening');
+    console.info(`[Snapshot] ✓ ${_activeListeners.size} listeners activos (rol: ${role ?? 'dev-admin'}).`);
+}
 export function stopRealtimeListeners() {
     if (_activeListeners.size === 0) return;
     console.info(`[Snapshot] Deteniendo ${_activeListeners.size} listeners…`);

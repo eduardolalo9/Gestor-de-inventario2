@@ -195,15 +195,54 @@ export function showConfirm(message, onConfirm) {
  * Re-renderiza los botones de acción del header según el tab activo.
  * Se llama cada vez que cambia el estado del carrito o del tab.
  */
+
+/**
+ * updateHeaderActions()
+ *
+ * Re-renderiza los botones de acción del header según:
+ *   • El tab activo  (state.activeTab)
+ *   • El rol actual  (state.userRole)
+ *
+ * Matriz de visibilidad:
+ * ┌─────────────────────────┬───────┬──────┐
+ * │ Botón                   │ admin │ user │
+ * ├─────────────────────────┼───────┼──────┤
+ * │ 📥 Importar Excel       │  ✓    │  ✗   │  tab: inicio / productos
+ * │ 🛒 Carrito              │  ✓    │  ✓   │  tab: pedidos (si hay items)
+ * │ ⬇️ Excel (export)       │  ✓    │  ✗   │  tab: inventario
+ * └─────────────────────────┴───────┴──────┘
+ */
 export function updateHeaderActions() {
     const container = document.getElementById('headerActions');
     if (!container) return;
 
-    const cartCount = state.cart.reduce((sum, item) => sum + (item.quantity || 0), 0);
+    const isAdmin    = state.userRole === 'admin';
+    const cartCount  = state.cart.reduce((sum, item) => sum + (item.quantity || 0), 0);
     let html = '';
 
+    // ── "📥 Importar Excel" — tab inicio / productos, solo admin ──
+    // Activa el input oculto #fileInput que acepta .xlsx/.xls/.csv
+    // y llama a window.handleFileImport (definido en products.js).
+    if (isAdmin && (state.activeTab === 'inicio' || state.activeTab === 'productos')) {
+        html += `<button
+            onclick="document.getElementById('fileInput').click()"
+            class="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-white rounded-lg text-xs font-semibold shadow-sm"
+            style="background:rgba(255,255,255,0.09);border-color:rgba(255,255,255,0.18);"
+            title="Importar catálogo de productos desde Excel (.xlsx)">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+            </svg>
+            Excel
+        </button>`;
+    }
+
+    // ── 🛒 Carrito — tab pedidos, visible para ambos roles ────────
+    // El botón de carrito no requiere restricción de rol porque
+    // ver el resumen del pedido no modifica el catálogo de productos.
     if (state.activeTab === 'pedidos' && cartCount > 0) {
-        html += `<button onclick="window.openOrderModal()"
+        html += `<button
+            onclick="window.openOrderModal()"
             class="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-orange-500 text-white rounded-lg text-sm font-semibold shadow-sm"
             aria-label="Ver carrito (${cartCount} items)">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -214,8 +253,12 @@ export function updateHeaderActions() {
         </button>`;
     }
 
-    if (state.activeTab === 'inventario') {
-        html += `<button onclick="window.exportToExcel('INVENTARIO')"
+    // ── ⬇️ Excel export — tab inventario, solo admin ──────────────
+    // Exportar el estado de inventario es una operación de reporting
+    // que solo el administrador debe poder ejecutar.
+    if (isAdmin && state.activeTab === 'inventario') {
+        html += `<button
+            onclick="window.exportToExcel('INVENTARIO')"
             class="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg text-xs font-semibold shadow-sm"
             title="Exportar inventario a Excel">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
