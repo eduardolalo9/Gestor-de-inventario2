@@ -55,16 +55,20 @@ window._auth = null;
         window._auth = firebase.auth();
 
         // Persistencia offline nativa de Firestore (caché local automático)
-        window._db.enablePersistence({ synchronizeTabs: true })
-            .catch(err => {
-                if (err.code === 'failed-precondition') {
-                    console.warn("[Firebase] Persistencia offline no disponible (múltiples pestañas abiertas).");
-                } else if (err.code === 'unimplemented') {
-                    console.warn("[Firebase] Persistencia offline no soportada en este navegador.");
-                } else {
-                    console.warn("[Firebase] Error al habilitar persistencia:", err.code);
-                }
-            });
+        window._db.settings({
+  cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED
+});
+
+window._db.enableMultiTabIndexedDbPersistence()
+  .catch(err => {
+    if (err.code === 'failed-precondition') {
+      console.warn('[Firebase] Persistencia: múltiples pestañas abiertas.');
+    } else if (err.code === 'unimplemented') {
+      console.warn('[Firebase] Persistencia no soportada en este navegador.');
+    } else {
+      console.warn('[Firebase] Error persistencia:', err.code);
+    }
+  });
 
         console.info("[Firebase] ✓ Inicializado correctamente — proyecto:", FIREBASE_CONFIG.projectId);
 
