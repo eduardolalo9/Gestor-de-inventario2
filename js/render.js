@@ -154,12 +154,35 @@ function renderInicioTab() {
   });
   html += '</select>';
 
-  if (isAdmin) {
-    html += `<button onclick="window.openProductModal()"
-               class="px-3 py-2 bg-gradient-to-r from-purple-500 to-blue-500
-                      text-white rounded text-sm font-semibold">
-               + Producto
-             </button>`;
+if (isAdmin) {
+  html += `<button onclick="window.openProductModal()"
+    class="px-3 py-2 bg-gradient-to-r from-purple-500 to-blue-500
+    text-white rounded text-sm font-semibold">
+    + Producto
+  </button>`;
+
+  html += `<button onclick="document.getElementById('fileInput').click()"
+    class="px-3 py-2 bg-gradient-to-r from-green-600 to-emerald-600
+    text-white rounded text-sm font-semibold flex items-center gap-1">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+    </svg>
+    📊 Importar Excel
+  </button>`;
+}
+
+  html += `<button onclick="document.getElementById('fileInput').click()"
+    class="px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500
+    text-white rounded text-sm font-semibold flex items-center gap-1">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011
+        9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+    </svg>
+    Importar
+  </button>`;
+}
   }
   html += '</div>';
 
