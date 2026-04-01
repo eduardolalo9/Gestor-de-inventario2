@@ -1,8 +1,0 @@
-{
-  "firestore": {
-    "database": "(default)",
-    "location": "northamerica-south1",
-    "rules": "firebase deploy --only firestore:rules",
-    "indexes": "firestore.indexes.json"
-  }
-}
