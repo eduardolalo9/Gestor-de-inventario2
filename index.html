@@ -2107,8 +2107,10 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
          *     y espera al evento 'online' para reintentar
          *   • Reintentos con back-off exponencial (max 3 intentos)
          */
-        async function syncToCloud(retryCount = 0) {
-            if (!_db) return; // Firebase no configurado
+       async function syncToCloud(retryCount = 0) {
+    return; // 🔇 SYNC DESACTIVADO TEMPORALMENTE
+
+    if (!_db) return;
             if (_syncInProgress) return; // Ya hay una sincronización en curso
             if (!navigator.onLine) {
                 _cloudSyncPending = true;
@@ -2237,8 +2239,10 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
          *
          * @param {string} area - clave del área ('almacen' | 'barra1' | 'barra2')
          */
-        async function syncConteoAtomicoPorArea(area) {
-            if (!_db) {
+       async function syncConteoAtomicoPorArea(area) {
+    return; // 🔇 SYNC DESACTIVADO TEMPORALMENTE
+
+    if (!_db) {
                 console.info('[Atomico] Firebase no disponible — conteo guardado solo en local.');
                 return;
             }
@@ -2443,8 +2447,10 @@ html[data-theme="light"] #syncDot::after { background: #1e293b; }
          * Si localStorage tiene datos más recientes (cambios offline previos),
          * inicia una sincronización hacia la nube.
          */
-        async function loadFromCloud() {
-            if (!_db) return;
+      async function loadFromCloud() {
+    return; // 🔇 SYNC DESACTIVADO TEMPORALMENTE
+
+    if (!_db) return;
             if (!navigator.onLine) {
                 console.info('[Firebase] Sin conexión — usando localStorage.');
                 return;
