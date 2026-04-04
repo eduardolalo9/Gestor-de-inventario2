@@ -45,7 +45,8 @@
 
     <!-- SheetJS — SIN defer para garantizar que window.XLSX esté disponible
          antes de que los módulos ES intenten usarlo al importar/exportar Excel -->
-    <script src="libs/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
 
 <body class="min-h-screen">
 
@@ -86,8 +87,8 @@
 
     <!-- APP WRAPPER: Solo visible tras autenticación exitosa -->
     <div id="appWrapper">
-       <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden" style="display:none">
-<input type="file" id="importDataInput" accept=".json" class="hidden" style="display:none">
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden">
+        <input type="file" id="importDataInput" accept=".json" class="hidden">
 
         <!-- Overlay del Sidebar -->
         <div id="sbOverlay" onclick="sbClose()"></div>
@@ -134,11 +135,6 @@ Exportar datos
 <button type="button" class="sb-item" onclick="document.getElementById('importDataInput').click(); sbClose()">
 <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
 Importar datos (JSON)
-</button>
-
-<button type="button" class="sb-item" onclick="var fi=document.getElementById('fileInput'); fi.value=''; fi.click(); sbClose()">
-<svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-Importar Excel
 </button>
 
 <p class="sb-sep">Nube</p>
