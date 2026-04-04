@@ -253,10 +253,11 @@ async function _applyMainDocData(data) {
     }
 
     if (data._ordersInChunks) {
-        const r = await _readChunkedSubcollection(docRef, 'ordersChunks');
-        if (r.length) state.orders = r;
+        // BUG-FIX: orders de la nube NO se aplican — cada dispositivo
+        // conserva su propio historial local de pedidos WhatsApp.
+        // (bloque intencionalmente vacío)
     } else if (Array.isArray(data.orders)) {
-        state.orders = data.orders;
+        // ídem: ignorar orders del doc principal
     }
 
     if (data._inventoriesInChunks) {
@@ -763,6 +764,8 @@ export async function syncToCloud(retryCount = 0) {
 
             // ── Payload del doc principal ─────────────────────────────────
             // NOTA: _lastLocalWriteTs se asigna FUERA del callback (abajo)
+            // BUG-FIX: orders NO se incluyen en el payload — quedan solo en
+            // localStorage del dispositivo (no se sincronizan entre teléfonos).
             const payload = {
                 products:             state.products,
                 cart:                 state.cart,
@@ -772,7 +775,7 @@ export async function syncToCloud(retryCount = 0) {
                 auditoriaConteo:      state.auditoriaConteo,
                 _lastModified:        localTs,
                 _syncedAt:            Date.now(),
-                _ordersInChunks:      true,
+                _ordersInChunks:      false,   // ← orders NO suben a la nube
                 _inventoriesInChunks: true,
                 _conteoInSubcol:      true,
             };
@@ -824,10 +827,8 @@ export async function syncToCloud(retryCount = 0) {
         }
 
         // Historiales chunkeados (append-only, fuera de la transacción es seguro)
-        await Promise.all([
-            _writeChunkedSubcollection(docRef, 'ordersChunks',      state.orders),
-            _writeChunkedSubcollection(docRef, 'inventoriesChunks', state.inventories),
-        ]);
+        // BUG-FIX: orders NO se suben — solo inventories se sincronizan a la nube
+        await _writeChunkedSubcollection(docRef, 'inventoriesChunks', state.inventories);
 
         state._cloudSyncPending = false;
         state._lastCloudSync    = Date.now();

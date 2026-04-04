@@ -169,7 +169,7 @@ function renderInicioTab() {
       + Producto
     </button>`;
 
-    html += `<button onclick="document.getElementById('fileInput').click()"
+    html += `<button onclick="var fi=document.getElementById('fileInput'); fi.value=''; fi.click()"
       class="px-3 py-2 bg-gradient-to-r from-green-600 to-emerald-600
              text-white rounded text-sm font-semibold flex items-center gap-1">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -330,145 +330,129 @@ function _statCard(emoji, label, value, color) {
 function renderProductosTab() { return renderInicioTab(); }
 
 /* ═══════════════════════════════════════════════════════════════
-   TAB: PEDIDOS
+   TAB: PEDIDOS — Solo historial de pedidos generados por WhatsApp.
+   El catálogo para agregar al carrito está en Inicio (botón 🛒).
+   Los pedidos NO se sincronizan a Firestore — quedan solo en
+   el dispositivo (localStorage).
 ═══════════════════════════════════════════════════════════════ */
 function renderPedidosTab() {
-  const isAdmin  = state.userRole === 'admin';
-  const filtered = filterByGroup();
+  const isAdmin = state.userRole === 'admin';
 
   let html = '<div class="space-y-4">';
 
-  /* ── Agregar al carrito ── */
-  html += '<div class="bg-white rounded-xl p-4 shadow-md">';
-  html += '<h3 class="text-lg font-bold text-gray-900 mb-3">Agregar al pedido</h3>';
-  html += '<div class="space-y-1">';
+  /* ── Encabezado de sección ── */
+  html += `<div class="flex items-center justify-between">
+    <h3 class="text-lg font-bold text-gray-900">
+      📱 Pedidos por WhatsApp
+    </h3>
+    <span class="text-xs text-gray-400 italic">Solo en este dispositivo</span>
+  </div>`;
 
-  filtered.forEach(p => {
-    const stock = getTotalStock(p);
-    html += '<div class="flex items-center gap-2 py-1.5 border-b border-gray-200">';
-    html += `<div class="flex-1">
-      <span class="text-sm font-medium text-gray-900">${escapeHtml(p.name)}</span>
-      <span class="text-xs text-gray-500">
-        (stock: ${stock.toFixed(2)} ${escapeHtml(p.unit || '')})
-      </span>
+  /* ── Sin pedidos ── */
+  if (state.orders.length === 0) {
+    html += `<div class="bg-white rounded-xl p-8 text-center shadow-md">
+      <div style="font-size:2.5rem">🛒</div>
+      <p class="text-gray-500 mt-2 font-medium">No hay pedidos todavía</p>
+      <p class="text-xs text-gray-400 mt-1">
+        Ve a Inicio, agrega productos al carrito con 🛒 y genera un pedido
+      </p>
     </div>`;
-    html += `<button data-id="${escapeHtml(p.id)}"
-      onclick="window.addToCart(this.dataset.id)"
-      class="px-2 py-1 bg-gradient-to-r from-purple-500 to-blue-500
-             text-white rounded text-xs font-semibold">
-      + Agregar
-    </button>`;
     html += '</div>';
-  });
-
-  html += '</div>'; /* cierra div.space-y-1 */
-
-  /* Botón ver carrito — SOLO admin */
-  if (isAdmin && state.cart.length > 0) {
-    const cartTotal = state.cart.reduce((s, i) => s + i.quantity, 0).toFixed(1);
-    html += `<button onclick="window.openOrderModal()"
-      class="w-full mt-3 py-2 bg-gradient-to-r from-green-500 to-emerald-500
-             text-white rounded-lg font-semibold text-sm">
-      🛒 Ver carrito (${cartTotal} items) y generar pedido
-    </button>`;
+    return html;
   }
 
-  html += '</div>'; /* cierra div.bg-white (agregar al carrito) */
-
   /* ── Historial de pedidos ── */
-  if (state.orders.length > 0) {
-    html += '<h3 class="text-lg font-bold text-gray-900">Historial de pedidos</h3>';
-    html += '<div class="space-y-4">';
+  html += '<div class="space-y-4">';
 
-    state.orders.forEach((order, idx) => {
-      const delay = Math.min(idx * 50, 400);
-      html += `<div class="bg-white rounded-2xl p-4 shadow-md"
-        style="animation:tabContentIn 0.3s ease-out ${delay}ms both">`;
+  state.orders.forEach((order, idx) => {
+    const delay = Math.min(idx * 50, 400);
+    html += `<div class="bg-white rounded-2xl p-4 shadow-md"
+      style="animation:tabContentIn 0.3s ease-out ${delay}ms both">`;
 
-      html += `<div class="flex justify-between items-start mb-3">
-        <div>
-          <h3 class="text-base font-bold text-gray-900">${escapeHtml(order.id)}</h3>
-          <p class="text-sm text-gray-600">Proveedor: ${escapeHtml(order.supplier)}</p>
-          <p class="text-xs text-gray-500">Fecha: ${escapeHtml(order.date)}</p>
-          ${order.deliveryDate
-            ? `<p class="text-xs text-gray-500">Entrega: ${escapeHtml(order.deliveryDate)}</p>`
-            : ''}
-        </div>`;
+    html += `<div class="flex justify-between items-start mb-3">
+      <div>
+        <h3 class="text-base font-bold text-gray-900">${escapeHtml(order.id)}</h3>
+        <p class="text-sm text-gray-600">Proveedor: ${escapeHtml(order.supplier)}</p>
+        <p class="text-xs text-gray-500">Fecha: ${escapeHtml(order.date)}</p>
+        ${order.deliveryDate
+          ? `<p class="text-xs text-gray-500">Entrega: ${escapeHtml(order.deliveryDate)}</p>`
+          : ''}
+      </div>`;
 
-      html += '<div class="flex gap-2">';
+    html += '<div class="flex gap-2">';
 
-      /* Compartir — AMBOS roles */
+    /* Re-enviar por WhatsApp — AMBOS roles */
+    html += `<button data-id="${escapeHtml(order.id)}"
+      onclick="window.shareOrderWhatsApp(this.dataset.id)"
+      title="Reenviar por WhatsApp"
+      class="p-2 bg-gradient-to-br from-green-500 to-emerald-500
+             text-white rounded-xl">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342
+             m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316
+             m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368
+             2.684 3 3 0 00-5.368-2.684z"/>
+      </svg>
+    </button>`;
+
+    /* Eliminar pedido — SOLO admin */
+    if (isAdmin) {
       html += `<button data-id="${escapeHtml(order.id)}"
-        onclick="window.shareOrderWhatsApp(this.dataset.id)"
-        class="p-2 bg-gradient-to-br from-green-500 to-emerald-500
+        onclick="window.deleteOrder(this.dataset.id)"
+        title="Eliminar pedido"
+        class="p-2 bg-gradient-to-br from-red-500 to-orange-500
                text-white rounded-xl">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342
-               m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316
-               m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368
-               2.684 3 3 0 00-5.368-2.684z"/>
+            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0
+               01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1
+               1 0 00-1 1v3M4 7h16"/>
         </svg>
       </button>`;
+    }
 
-      /* Eliminar pedido — SOLO admin */
-      if (isAdmin) {
-        html += `<button data-id="${escapeHtml(order.id)}"
-          onclick="window.deleteOrder(this.dataset.id)"
-          class="p-2 bg-gradient-to-br from-red-500 to-orange-500
-                 text-white rounded-xl">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0
-                 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1
-                 1 0 00-1 1v3M4 7h16"/>
-          </svg>
-        </button>`;
-      }
+    html += '</div>'; /* cierra div.flex.gap-2 (botones) */
+    html += '</div>'; /* cierra div.flex.justify-between */
 
-      html += '</div>'; /* cierra div.flex.gap-2 (botones pedido) */
-      html += '</div>'; /* cierra div.flex.justify-between */
+    /* Tabla productos del pedido */
+    html += '<div class="overflow-x-auto"><table class="w-full">'
+          + '<thead class="bg-gradient-to-r from-purple-600 to-blue-600">'
+          + '<tr>'
+          + '<th class="px-3 py-2 text-left text-xs text-white">Producto</th>'
+          + '<th class="px-3 py-2 text-center text-xs text-white">Unidad</th>'
+          + '<th class="px-3 py-2 text-center text-xs text-white">Cantidad</th>'
+          + '</tr></thead>'
+          + '<tbody class="divide-y divide-gray-200">';
 
-      /* Tabla productos del pedido */
-      html += '<div class="overflow-x-auto"><table class="w-full">'
-            + '<thead class="bg-gradient-to-r from-purple-600 to-blue-600">'
-            + '<tr>'
-            + '<th class="px-3 py-2 text-left text-xs text-white">Producto</th>'
-            + '<th class="px-3 py-2 text-center text-xs text-white">Unidad</th>'
-            + '<th class="px-3 py-2 text-center text-xs text-white">Cantidad</th>'
-            + '</tr></thead>'
-            + '<tbody class="divide-y divide-gray-200">';
-
-      order.products.forEach(p => {
-        html += `<tr>
-          <td class="px-3 py-2 text-gray-900 text-sm">${escapeHtml(p.name)}</td>
-          <td class="px-3 py-2 text-center text-gray-600 text-sm">${escapeHtml(p.unit)}</td>
-          <td class="px-3 py-2 text-center font-semibold text-gray-900 text-sm">
-            ${p.quantity}
-          </td>
-        </tr>`;
-      });
-
-      html += '</tbody></table></div>';
-
-      html += `<div class="mt-2 text-right">
-        <span class="text-sm font-bold text-gray-900">
-          Total: ${(order.total || 0).toFixed(2)}
-        </span>
-      </div>`;
-
-      if (order.note) {
-        html += `<div class="mt-2 p-2 bg-purple-50 rounded">
-          <p class="text-xs text-gray-600">Nota: ${escapeHtml(order.note)}</p>
-        </div>`;
-      }
-
-      html += '</div>'; /* cierra card pedido */
+    order.products.forEach(p => {
+      html += `<tr>
+        <td class="px-3 py-2 text-gray-900 text-sm">${escapeHtml(p.name)}</td>
+        <td class="px-3 py-2 text-center text-gray-600 text-sm">${escapeHtml(p.unit)}</td>
+        <td class="px-3 py-2 text-center font-semibold text-gray-900 text-sm">
+          ${p.quantity}
+        </td>
+      </tr>`;
     });
 
-    html += '</div>'; /* cierra div.space-y-4 (historial) */
-  }
+    html += '</tbody></table></div>';
 
+    html += `<div class="mt-2 text-right">
+      <span class="text-sm font-bold text-gray-900">
+        Total: ${(order.total || 0).toFixed(2)}
+      </span>
+    </div>`;
+
+    if (order.note) {
+      html += `<div class="mt-2 p-2 bg-purple-50 rounded">
+        <p class="text-xs text-gray-600">Nota: ${escapeHtml(order.note)}</p>
+      </div>`;
+    }
+
+    html += '</div>'; /* cierra card pedido */
+  });
+
+  html += '</div>'; /* cierra div.space-y-4 (historial) */
   html += '</div>'; /* cierra div.space-y-4 raíz */
   return html;
 }
@@ -602,13 +586,20 @@ function renderAuditoriaConteo() {
   </p>`;
   html += '</div>'; /* cierra audit-count-header */
 
-  /* Búsqueda */
-  html += `<div class="mb-3">
+  /* Búsqueda + filtro por grupo */
+  const _invGroups = getAvailableGroups();
+  html += `<div class="mb-3 flex gap-2">
     <input type="text" placeholder="Buscar..."
       value="${escapeHtml(state.searchTerm)}"
       oninput="window.updateSearchTerm(this.value)"
-      class="w-full px-3 py-2 bg-white text-gray-900 border border-gray-200
+      class="flex-1 min-w-0 px-3 py-2 bg-white text-gray-900 border border-gray-200
              rounded-lg text-sm">
+    <select onchange="window.updateSelectedGroup(this.value)"
+      class="px-2 py-2 bg-white text-gray-900 border border-gray-200 rounded-lg text-sm flex-shrink-0">`;
+  _invGroups.forEach(g => {
+    html += `<option value="${escapeHtml(g)}"${state.selectedGroup === g ? ' selected' : ''}>${escapeHtml(g)}</option>`;
+  });
+  html += `</select>
   </div>`;
 
   /* Tarjetas de producto */

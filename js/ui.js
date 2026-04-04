@@ -225,7 +225,7 @@ export function updateHeaderActions() {
     // y llama a window.handleFileImport (definido en products.js).
     if (isAdmin && (state.activeTab === 'inicio' || state.activeTab === 'productos')) {
         html += `<button
-            onclick="document.getElementById('fileInput').click()"
+            onclick="var fi=document.getElementById('fileInput'); fi.value=''; fi.click()"
             class="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-white rounded-lg text-xs font-semibold shadow-sm"
             style="background:rgba(255,255,255,0.09);border-color:rgba(255,255,255,0.18);"
             title="Importar catálogo de productos desde Excel (.xlsx)">
@@ -237,10 +237,10 @@ export function updateHeaderActions() {
         </button>`;
     }
 
-    // ── 🛒 Carrito — tab pedidos, visible para ambos roles ────────
-    // El botón de carrito no requiere restricción de rol porque
-    // ver el resumen del pedido no modifica el catálogo de productos.
-    if (state.activeTab === 'pedidos' && cartCount > 0) {
+    // ── 🛒 Carrito — tab inicio + pedidos, visible para ambos roles ──────
+    // Visible en inicio para que el usuario pueda abrir el modal de pedido
+    // sin tener que cambiar de pestaña.
+    if ((state.activeTab === 'inicio' || state.activeTab === 'pedidos') && cartCount > 0) {
         html += `<button
             onclick="window.openOrderModal()"
             class="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-orange-500 text-white rounded-lg text-sm font-semibold shadow-sm"

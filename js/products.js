@@ -522,70 +522,191 @@ function parseExcelNumber(val) {
     return parseFloat(str) || 0;
 }
 
+/* ── Normaliza texto para comparación flexible ────────────────── */
+function _norm(str) {
+    return String(str || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');   // quita tildes: á→a, é→e, etc.
+}
+
+/* ── Carga XLSX dinámicamente si no está disponible todavía ────── */
+function _loadXLSX() {
+    return new Promise((resolve, reject) => {
+        if (window.XLSX) { resolve(window.XLSX); return; }
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        s.onload  = () => resolve(window.XLSX);
+        s.onerror = () => reject(new Error('No se pudo cargar la librería Excel (SheetJS)'));
+        document.head.appendChild(s);
+    });
+}
+
 export function handleFileImport(event) {
     const file = event.target.files[0];
     if (!file) return;
+
+    // Limpiar el input AHORA para que el mismo archivo se pueda re-seleccionar
+    // (si se limpia después, el evento "change" no vuelve a disparar)
     const fileInput = event.target;
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        try {
-            const data = new Uint8Array(e.target.result);
-            const workbook = window.XLSX.read(data, { type: 'array' });
-            if (!workbook.SheetNames || workbook.SheetNames.length === 0) { showNotification('El archivo no contiene hojas válidas'); return; }
-            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-            if (!firstSheet) { showNotification('La primera hoja del archivo está vacía'); return; }
-            const jsonData = window.XLSX.utils.sheet_to_json(firstSheet);
-            if (!jsonData || jsonData.length === 0) { showNotification('El archivo no contiene datos válidos'); return; }
-            const columnMap = {
-    id:   ['ID','Id','id','Código','codigo'],
-    name: ['Producto','Nombre','Descripción','descripcion','producto',
-           'nombre','Name','name','PRODUCTO','NOMBRE'],        // ← Agregados
-    unit: ['Unidad','unidad','Medida','medida','Unit','UNIDAD'],
-    group:['Grupo','grupo','Categoría','categoria','Group','GRUPO'],
-    stock:['Cantidad','cantidad','Stock','stock','Enteras',
-           'CANTIDAD','STOCK'],                                 // ← Agregados
-    capacidadMl: ['CapacidadML','capacidadMl','CapacidadMl',
-                  'Capacidad_ML','CapML','capacidadML'],        // ← Agregado
-    pesoBotellaLlenaOz: ['PesoBotellaOz','pesoBotellaOz',
-                         'PesoLlenaOz','PesoBotella_Oz','PesoOz',
-                         'PesoBotella0z','pesobotella0z',       // ← ¡TU EXCEL USA 0 (CERO)!
-                         'PesoBotellaLlenaOz'],
-};
-            const findCol = (row, keys) => { for (const key of keys) { if (row[key]!==undefined && row[key]!==null && row[key]!=='') return row[key]; } return undefined; };
-            const existingIds = new Set(state.products.map(p => p.id));
-            let maxNum = 0;
-            state.products.forEach(p => { const m = p.id.match(/^PRD-(\d+)$/); if (m) maxNum = Math.max(maxNum, parseInt(m[1],10)); });
-            let nextNum = maxNum + 1;
-            const toImport = []; const usedInBatch = new Set(); let skipped = 0;
-            jsonData.forEach(row => {
-                const nameRaw = findCol(row, columnMap.name);
-                const name = nameRaw !== undefined ? String(nameRaw).trim() : '';
-                if (!name) { skipped++; return; }
-                const rawId = findCol(row, columnMap.id);
-                let id = rawId !== undefined ? String(rawId).trim() : '';
-                if (!id || existingIds.has(id) || usedInBatch.has(id)) { do { id = 'PRD-' + String(nextNum++).padStart(3,'0'); } while (existingIds.has(id) || usedInBatch.has(id)); }
-                usedInBatch.add(id);
-                const unitRaw  = findCol(row, columnMap.unit);  const unit  = unitRaw  !== undefined ? String(unitRaw).trim()  : 'Unidad';
-                const groupRaw = findCol(row, columnMap.group); const group = groupRaw !== undefined ? String(groupRaw).trim() : 'General';
-                const stockRaw = findCol(row, columnMap.stock); const stock = stockRaw !== undefined ? parseExcelNumber(stockRaw) : 0;
-                const capRaw   = findCol(row, columnMap.capacidadMl);
-                const capacidadMl = (capRaw !== undefined) ? (isNaN(parseFloat(capRaw)) ? null : parseFloat(capRaw)) : null;
-                const pesoRaw  = findCol(row, columnMap.pesoBotellaLlenaOz);
-                const pesoBotellaLlenaOz = (pesoRaw !== undefined) ? (isNaN(parseFloat(pesoRaw)) ? null : parseFloat(pesoRaw)) : null;
-                const product  = { id, name, stockByArea: { almacen: stock, barra1: 0, barra2: 0 }, unit, group };
-                if (capacidadMl !== null)       product.capacidadMl       = capacidadMl;
-                if (pesoBotellaLlenaOz !== null) product.pesoBotellaLlenaOz = pesoBotellaLlenaOz;
-                toImport.push(product);
-            });
-            state.products = state.products.concat(toImport);
-            showNotification(`${toImport.length} productos importados.${skipped ? ' '+skipped+' filas omitidas.' : ''}`);
-            state.activeTab = 'inicio'; state.selectedGroup = 'Todos'; state.searchTerm = ''; state.selectedArea = 'almacen';
-            saveToLocalStorage();
-            import('./render.js').then(m => m.renderTab());
-            fileInput.value = '';
-        } catch (error) { showNotification('Error al importar archivo: ' + error.message); console.error('[Import]', error); fileInput.value = ''; }
+
+    // ── Alias de columnas — se comparan en minúsculas sin tildes ──
+    const columnMap = {
+        id:   ['id', 'codigo', 'clave', 'sku', 'cod'],
+        name: ['producto', 'nombre', 'descripcion', 'articulo', 'item',
+               'name', 'description', 'detalle', 'concepto', 'bebida'],
+        unit: ['unidad', 'medida', 'unit', 'um', 'tipo'],
+        group:['grupo', 'categoria', 'group', 'category', 'familia', 'tipo'],
+        stock:['cantidad', 'stock', 'enteras', 'existencia', 'qty', 'quantity'],
+        capacidadMl: ['capacidadml', 'capacidad_ml', 'capml', 'ml', 'capacidad'],
+        pesoBotellaLlenaOz: ['pesobotella0z', 'pesobotellaoz', 'pesollenaoz',
+                             'pesobotella_oz', 'pesooz', 'pesobotellallenaoz',
+                             'peso_oz', 'pesooz'],
     };
-    reader.readAsArrayBuffer(file);
+
+    // ── Detecta a qué campo pertenece cada columna del Excel ─────
+    function _mapHeaders(rowKeys) {
+        const mapped = {};   // fieldName → excelColumnKey
+        rowKeys.forEach(rk => {
+            const rkNorm = _norm(rk);
+            for (const [field, aliases] of Object.entries(columnMap)) {
+                if (mapped[field]) continue;           // ya encontrado
+                if (aliases.some(a => rkNorm === a || rkNorm.includes(a))) {
+                    mapped[field] = rk;
+                }
+            }
+        });
+        return mapped;
+    }
+
+    _loadXLSX().then(XLSX => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const data     = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+
+                if (!workbook.SheetNames?.length) {
+                    showNotification('❌ El archivo no contiene hojas válidas'); return;
+                }
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                if (!firstSheet) {
+                    showNotification('❌ La primera hoja está vacía'); return;
+                }
+
+                const jsonData = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+                if (!jsonData?.length) {
+                    showNotification('❌ El archivo no tiene datos — verifica que tenga una fila de encabezados'); return;
+                }
+
+                // ── Mapear columnas del Excel a campos conocidos ──
+                const rowKeys    = Object.keys(jsonData[0]);
+                const headerMap  = _mapHeaders(rowKeys);
+
+                // ── Diagnóstico: mostrar qué columnas se detectaron ──
+                const detectedFields = Object.keys(headerMap);
+                if (!headerMap.name) {
+                    // No se encontró columna de nombre — mostrar qué hay en el Excel
+                    const colList = rowKeys.slice(0, 6).join(', ');
+                    showNotification(
+                        `❌ No se encontró columna de nombre.\n` +
+                        `Columnas en tu Excel: ${colList}\n` +
+                        `Usa: Producto, Nombre, Descripción, Artículo o Bebida`
+                    );
+                    console.warn('[Import] Columnas en el Excel:', rowKeys);
+                    console.warn('[Import] Campos detectados:', headerMap);
+                    fileInput.value = '';
+                    return;
+                }
+
+                // ── Importar filas ───────────────────────────────
+                const existingIds  = new Set(state.products.map(p => p.id));
+                let maxNum = 0;
+                state.products.forEach(p => {
+                    const m = p.id.match(/^PRD-(\d+)$/);
+                    if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+                });
+                let nextNum     = maxNum + 1;
+                const toImport  = [];
+                const usedBatch = new Set();
+                let skipped     = 0;
+
+                jsonData.forEach(row => {
+                    const nameRaw = headerMap.name ? row[headerMap.name] : '';
+                    const name    = String(nameRaw || '').trim();
+                    if (!name) { skipped++; return; }
+
+                    // ID: usar el del Excel o generar uno
+                    let id = headerMap.id ? String(row[headerMap.id] || '').trim() : '';
+                    if (!id || existingIds.has(id) || usedBatch.has(id)) {
+                        do { id = 'PRD-' + String(nextNum++).padStart(3, '0'); }
+                        while (existingIds.has(id) || usedBatch.has(id));
+                    }
+                    usedBatch.add(id);
+
+                    const unit  = headerMap.unit  ? String(row[headerMap.unit]  || '').trim() || 'Unidad'   : 'Unidad';
+                    const group = headerMap.group ? String(row[headerMap.group] || '').trim() || 'General'  : 'General';
+                    const stock = headerMap.stock ? parseExcelNumber(row[headerMap.stock]) : 0;
+
+                    const capRaw  = headerMap.capacidadMl        ? row[headerMap.capacidadMl]        : undefined;
+                    const pesoRaw = headerMap.pesoBotellaLlenaOz ? row[headerMap.pesoBotellaLlenaOz] : undefined;
+                    const capacidadMl        = capRaw  !== undefined && capRaw  !== '' ? (parseFloat(capRaw)  || null) : null;
+                    const pesoBotellaLlenaOz = pesoRaw !== undefined && pesoRaw !== '' ? (parseFloat(pesoRaw) || null) : null;
+
+                    const product = { id, name, stockByArea: { almacen: stock, barra1: 0, barra2: 0 }, unit, group };
+                    if (capacidadMl        !== null) product.capacidadMl        = capacidadMl;
+                    if (pesoBotellaLlenaOz !== null) product.pesoBotellaLlenaOz = pesoBotellaLlenaOz;
+
+                    // Registrar en inventarioConteo para que el stock no se pierda al reiniciar
+                    if (stock > 0) {
+                        if (!state.inventarioConteo[id]) state.inventarioConteo[id] = {};
+                        state.inventarioConteo[id].almacen = { enteras: stock, abiertas: [] };
+                    }
+                    toImport.push(product);
+                });
+
+                if (toImport.length === 0) {
+                    showNotification(
+                        `⚠️ 0 productos importados — ${skipped} filas omitidas.\n` +
+                        `Columna de nombre encontrada: "${headerMap.name}"\n` +
+                        `Verifica que las celdas no estén vacías.`
+                    );
+                    fileInput.value = '';
+                    return;
+                }
+
+                state.products = state.products.concat(toImport);
+                syncStockByAreaFromConteo();
+
+                // Resumen de columnas reconocidas
+                const reconocidas = detectedFields.map(f => `${f}→"${headerMap[f]}"`).join(', ');
+                console.info('[Import] Columnas reconocidas:', reconocidas);
+
+                showNotification(
+                    `✅ ${toImport.length} productos importados` +
+                    (skipped ? ` · ${skipped} filas omitidas` : '')
+                );
+                state.activeTab   = 'inicio';
+                state.selectedGroup = 'Todos';
+                state.searchTerm  = '';
+                state.selectedArea = 'almacen';
+                saveToLocalStorage();
+                import('./render.js').then(m => m.renderTab());
+
+            } catch (error) {
+                showNotification('❌ Error al leer el archivo: ' + error.message);
+                console.error('[Import]', error);
+            } finally {
+                fileInput.value = '';
+            }
+        };
+        reader.readAsArrayBuffer(file);
+
+    }).catch(err => {
+        showNotification('❌ ' + err.message);
+        fileInput.value = '';
+    });
 }
 
 export function exportToExcel(modo) {
