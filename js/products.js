@@ -537,12 +537,20 @@ export function handleFileImport(event) {
             const jsonData = window.XLSX.utils.sheet_to_json(firstSheet);
             if (!jsonData || jsonData.length === 0) { showNotification('El archivo no contiene datos válidos'); return; }
             const columnMap = {
-                id: ['ID','Id','id','Código','codigo'], name: ['Nombre','Descripción','descripcion','Producto','producto','nombre'],
-                unit: ['Unidad','unidad','Medida','medida'], group: ['Grupo','grupo','Categoría','categoria'],
-                stock: ['Cantidad','cantidad','Stock','stock','Enteras'],
-                capacidadMl: ['CapacidadML','capacidadMl','CapacidadMl','Capacidad_ML','CapML'],
-                pesoBotellaLlenaOz: ['PesoBotellaOz','pesoBotellaOz','PesoLlenaOz','PesoBotella_Oz','PesoOz'],
-            };
+    id:   ['ID','Id','id','Código','codigo'],
+    name: ['Producto','Nombre','Descripción','descripcion','producto',
+           'nombre','Name','name','PRODUCTO','NOMBRE'],        // ← Agregados
+    unit: ['Unidad','unidad','Medida','medida','Unit','UNIDAD'],
+    group:['Grupo','grupo','Categoría','categoria','Group','GRUPO'],
+    stock:['Cantidad','cantidad','Stock','stock','Enteras',
+           'CANTIDAD','STOCK'],                                 // ← Agregados
+    capacidadMl: ['CapacidadML','capacidadMl','CapacidadMl',
+                  'Capacidad_ML','CapML','capacidadML'],        // ← Agregado
+    pesoBotellaLlenaOz: ['PesoBotellaOz','pesoBotellaOz',
+                         'PesoLlenaOz','PesoBotella_Oz','PesoOz',
+                         'PesoBotella0z','pesobotella0z',       // ← ¡TU EXCEL USA 0 (CERO)!
+                         'PesoBotellaLlenaOz'],
+};
             const findCol = (row, keys) => { for (const key of keys) { if (row[key]!==undefined && row[key]!==null && row[key]!=='') return row[key]; } return undefined; };
             const existingIds = new Set(state.products.map(p => p.id));
             let maxNum = 0;
