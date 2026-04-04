@@ -59,10 +59,10 @@ window._auth = null;
   cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED
 });
 
-window._db.enableMultiTabIndexedDbPersistence()
+window._db.enableIndexedDbPersistence()
   .catch(err => {
     if (err.code === 'failed-precondition') {
-      console.warn('[Firebase] Persistencia: múltiples pestañas abiertas.');
+      console.warn('[Firebase] Persistencia: múltiples pestañas abiertas — solo una pestaña usa caché offline.');
     } else if (err.code === 'unimplemented') {
       console.warn('[Firebase] Persistencia no soportada en este navegador.');
     } else {
