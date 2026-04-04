@@ -1,165 +1,70 @@
 /**
- * js/state.js — v2 (Fase 1: RBAC)
+ * js/state.js — v2.1
  * ══════════════════════════════════════════════════════════════
- * Fuente única de verdad (Single Source of Truth).
- *
- * CAMBIOS RESPECTO A v1:
- *   Añadidas tres propiedades para el sistema de roles:
- *     • currentUser   — Firebase User object (después del login)
- *     • userRole      — 'admin' | 'user' | null
- *     • userProfile   — perfil completo desde /usuarios/{uid}
- *
- * PATRÓN: objeto `state` exportado — los módulos importan y mutan
- *   directamente sus propiedades. Funciona porque los objetos JS
- *   se pasan por referencia.
- *
- * REGLA: NUNCA reasignar el objeto completo (state = {...}).
- *   Solo mutar propiedades individuales.
+ * Estado global centralizado de la aplicación.
+ * Todas las propiedades que CUALQUIER módulo necesita deben
+ * estar declaradas aquí para evitar errores de undefined.
  * ══════════════════════════════════════════════════════════════
  */
 
 export const state = {
 
-    // ── Autenticación y Roles (Fase 1) ─────────────────────────
-    /**
-     * Objeto Firebase User activo, o null si no hay sesión.
-     * @type {firebase.User|null}
-     */
-    currentUser: null,
+  // ─── Catálogo de productos (fuente: Admin) ──────────────────
+  products: [],
 
-    /**
-     * Rol del usuario autenticado, cargado desde /usuarios/{uid}.
-     * null = sin sesión activa o rol aún no cargado.
-     * @type {'admin'|'user'|null}
-     */
-    userRole: null,
+  // ─── Carrito (pedidos en curso) ─────────────────────────────
+  cart: [],
 
-    /**
-     * Perfil completo del usuario desde /usuarios/{uid}.
-     * {
-     *   uid:         string,
-     *   email:       string,
-     *   displayName: string,
-     *   role:        'admin' | 'user',
-     *   createdAt:   number,
-     *   lastLogin:   number,
-     * }
-     * @type {Object|null}
-     */
-    userProfile: null,
+  // ─── Historial ──────────────────────────────────────────────
+  orders: [],          // Pedidos completados (solo local, NO se sincronizan)
+  inventories: [],     // Historiales de inventario (se sincronizan chunkeados)
 
-    // ── Datos principales ──────────────────────────────────────
-    /** @type {Array<{id:string, name:string, unit:string, group:string, stockByArea:object, capacidadMl?:number, pesoBotellaLlenaOz?:number}>} */
-    products: [],
+  // ─── Navegación / UI ────────────────────────────────────────
+  activeTab: 'inicio',
+  selectedArea: 'almacen',
+  selectedGroup: 'Todos',
+  searchTerm: '',
 
-    /** @type {Array<{id:string, name:string, unit:string, group:string, quantity:number}>} */
-    cart: [],
+  // ─── Inventario operativo (conteo diario por área) ──────────
+  // Estructura: { [productId]: { almacen: number, barra1: number, barra2: number } }
+  inventarioConteo: {},
 
-    /** @type {Array} */
-    orders: [],
+  // ─── Auditoría (conteo de verificación) ─────────────────────
+  // Estructura: { [productId]: { [area]: { enteras: n, abiertas: [...] } } }
+  auditoriaConteo: {},
 
-    /** @type {Array} */
-    inventories: [],
+  // Estado de cada zona: 'pendiente' | 'en_progreso' | 'completada'
+  auditoriaStatus: {
+    almacen: 'pendiente',
+    barra1: 'pendiente',
+    barra2: 'pendiente',
+  },
 
-    // ── Navegación / UI ─────────────────────────────────────────
-    activeTab:        'inicio',
-    editingProductId: null,
-    searchTerm:       '',
-    selectedGroup:    'Todos',
-    selectedArea:     'almacen',
+  // ─── Multi-usuario (conteo por persona) ─────────────────────
+  // Estructura: { [productId]: { [area]: { [userId]: { enteras, abiertas, ts } } } }
+  auditoriaConteoPorUsuario: {},
 
-    /** @type {Set<string>} */
-    expandedInventories: new Set(),
+  // ─── Usuario actual de auditoría ────────────────────────────
+  // { userId: string, userName: string, role: 'admin'|'user' }
+  auditCurrentUser: null,
 
-    /** @type {Set<string>} */
-    expandedCards: new Set(),
+  // ─── Rol del usuario autenticado ────────────────────────────
+  // 'admin' | 'user' | null (null = modo dev, se trata como admin)
+  userRole: null,
 
-    // ── Conteo de inventario operativo ──────────────────────────
-    /**
-     * { productId: { area: { enteras: number, abiertas: number[] } } }
-     * area ∈ ['almacen', 'barra1', 'barra2']
-     */
-    inventarioConteo:        {},
-    inventarioModalProductId: null,
-    isInventarioModalOpen:    false,
+  // ─── Sincronización ─────────────────────────────────────────
+  syncEnabled: true,           // Toggle del usuario (pausar/activar sync)
+  _cloudSyncPending: false,    // Hay cambios locales sin subir
+  _syncInProgress: false,      // Mutex: evita sync simultáneos
+  _lastCloudSync: 0,           // Timestamp del último sync exitoso
+  _lastDataHash: '',           // Hash para detectar cambios reales
 
-    // ── Auditoría Física Ciega ──────────────────────────────────
-    /** 'selection' | 'counting' */
-    auditoriaView:       'selection',
-    auditoriaAreaActiva: null,
-    auditoriaStatus: {
-        almacen: 'pendiente',
-        barra1:  'pendiente',
-        barra2:  'pendiente',
-    },
-    /** { productId: { area: { enteras, abiertas } } } */
-    auditoriaConteo:  {},
-    isAuditoriaMode:  false,
+  // ─── Notificaciones ─────────────────────────────────────────
+  notificaciones: [],          // Array de notificaciones recibidas
 
-    // ── Multiusuario (conteo por dispositivo) ───────────────────
-    /**
-     * { userId: string, userName: string, createdAt: number }
-     * Generado una sola vez por dispositivo, persiste en localStorage.
-     */
-    auditCurrentUser: null,
-    /**
-     * { productId: { area: { userId: { userId, userName, enteras, abiertas, ts } } } }
-     * Estructura aditiva — cada dispositivo escribe SOLO su propio userId.
-     */
-    auditoriaConteoPorUsuario: {},
+  // ─── Ajustes (config del admin) ─────────────────────────────
+  ajustes: {},                 // Configuración sincronizada
 
-    // ── Sincronización con la nube ───────────────────────────────
-    /** true cuando hay cambios locales sin subir a Firestore */
-    _cloudSyncPending: false,
-    /** timestamp (ms) de la última sincronización exitosa */
-    _lastCloudSync:    0,
-    /** semáforo para evitar escrituras concurrentes */
-    _syncInProgress:   false,
-    /** hash para detectar cambios reales en los datos */
-    _lastDataHash:     '',
-
-    // ── Control de sincronización (usuario puede pausar) ─────────
-    /**
-     * Si false, syncToCloud() no sube datos automáticamente.
-     * Al volver a true, se suben todos los pendientes.
-     * Persiste en localStorage bajo 'inventarioApp_syncEnabled'.
-     */
-    syncEnabled: true,
-
-    // ── Notificaciones en tiempo real ────────────────────────────
-    /**
-     * Array de notificaciones cargadas desde Firestore.
-     * Cada elemento: { _id, tipo, mensaje, usuarioId, usuarioName,
-     *   productoId, productoName, datos, leida, fecha, docId }
-     */
-    notifications: [],
-    /** Cantidad de notificaciones sin leer */
-    notificationsUnread: 0,
-
-    // ── Reportes publicados por admin ────────────────────────────
-    /**
-     * Array de reportes publicados, cargados desde Firestore.
-     * Cada elemento: { _id, titulo, fecha, timestamp, publicadoPor,
-     *   productos[], auditoriaStatus, totalProductos }
-     */
-    reportesPublicados: [],
-
-    // ── Ajustes de producto ───────────────────────────────────────
-    /**
-     * Cola local de ajustes pendientes de subir a Firestore
-     * (cuando syncEnabled=false o no hay conexión).
-     */
-    adjustmentsPending: [],
-    /**
-     * Ajustes pendientes de aprobación (solo admin, desde Firestore).
-     * Cada elemento: { _id, productoId, productoName, campo,
-     *   valorAnterior, valorNuevo, razon, usuarioId, usuarioName, fecha }
-     */
-    ajustesPendientes: [],
+  // ─── Reportes ───────────────────────────────────────────────
+  reportesPublicados: [],      // Reportes publicados por admin para descarga
 };
-
-/**
- * Helpers de selección rápida.
- */
-export function getDb()   { return window._db; }
-export function getAuth() { return window._auth; }
