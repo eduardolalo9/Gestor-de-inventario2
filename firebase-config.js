@@ -6,8 +6,8 @@
  * antes que los módulos ES sean evaluados.
  *
  * Expone en window:
- *   window._db             — instancia de Firestore (o null)
- *   window._auth           — instancia de Auth (o null)
+ *   window._db        — instancia de Firestore (o null)
+ *   window._auth      — instancia de Auth      (o null)
  *   window.FIRESTORE_DOC_ID — ID del documento principal
  * ══════════════════════════════════════════════════════════════
  */
@@ -16,7 +16,7 @@
    Esta clave es visible en el código fuente. Restricción OBLIGATORIA:
    https://console.cloud.google.com → Credenciales → Restricciones de clave
    (dominio HTTP Referrer + solo Firestore API)
-   ─────────────────────────────────────────────────────────── */
+─────────────────────────────────────────────────────────── */
 const FIREBASE_CONFIG = {
     apiKey:            "AIzaSyDugu23uEgacqMUTsoBF8i7xfyDIDbiv0M",
     authDomain:        "bar-inventario-1109e.firebaseapp.com",
@@ -35,6 +35,7 @@ window.FIRESTORE_DOC_ID = "barra-principal";
 // ─── Estado global de Firebase (accedido por los módulos vía window) ─────────
 window._db   = null;
 window._auth = null;
+window._firebaseReady = false;  // ← NUEVO: flag para saber si Firebase cargó bien
 
 (function initFirebase() {
     'use strict';
@@ -46,6 +47,7 @@ window._auth = null;
 
     if (!configured) {
         console.warn("[Firebase] Config incompleta — solo se usará localStorage.");
+        window._firebaseReady = false;
         return;
     }
 
@@ -56,25 +58,27 @@ window._auth = null;
 
         // Persistencia offline nativa de Firestore (caché local automático)
         window._db.settings({
-  cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED
-});
+            cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED
+        });
 
-window._db.enableIndexedDbPersistence()
-  .catch(err => {
-    if (err.code === 'failed-precondition') {
-      console.warn('[Firebase] Persistencia: múltiples pestañas abiertas — solo una pestaña usa caché offline.');
-    } else if (err.code === 'unimplemented') {
-      console.warn('[Firebase] Persistencia no soportada en este navegador.');
-    } else {
-      console.warn('[Firebase] Error persistencia:', err.code);
-    }
-  });
+        window._db.enableIndexedDbPersistence()
+            .catch(err => {
+                if (err.code === 'failed-precondition') {
+                    console.warn('[Firebase] Persistencia: múltiples pestañas abiertas — solo una pestaña usa caché offline.');
+                } else if (err.code === 'unimplemented') {
+                    console.warn('[Firebase] Persistencia no soportada en este navegador.');
+                } else {
+                    console.warn('[Firebase] Error persistencia:', err.code);
+                }
+            });
 
+        window._firebaseReady = true;  // ← NUEVO
         console.info("[Firebase] ✓ Inicializado correctamente — proyecto:", FIREBASE_CONFIG.projectId);
 
     } catch (e) {
         console.error("[Firebase] Error crítico al inicializar:", e);
         window._db   = null;
         window._auth = null;
+        window._firebaseReady = false;  // ← NUEVO
     }
 })();

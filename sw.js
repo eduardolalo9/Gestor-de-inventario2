@@ -1,66 +1,109 @@
+// ============================================================
+// SERVICE WORKER — BarInventory
+// Versión: 1.0.0
+// ============================================================
+
 const CACHE_NAME = 'bar-inventory-v1';
+const CACHE_VERSION = 'v1.0.0';
+
+// Archivos que se guardan para funcionar sin internet
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/index/',
-  'https://cdn.tailwindcss.com',
-  'https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap',
-  'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css'
+  './',
+  './index.html',
+  './manifest.json'
 ];
 
-// Instalación: cachear recursos esenciales
+// ── Instalación ──────────────────────────────────────────────
 self.addEventListener('install', event => {
+  console.log('[SW] Instalando versión:', CACHE_VERSION);
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(ASSETS_TO_CACHE))
-      .catch(() => {}) // No bloquear si algún CDN falla
+      .then(cache => {
+        console.log('[SW] Guardando archivos en caché');
+        return cache.addAll(ASSETS_TO_CACHE);
+      })
+      .then(() => self.skipWaiting())
+      .catch(err => console.warn('[SW] Error en caché:', err))
   );
-  self.skipWaiting();
 });
 
-// Activación: limpiar cachés viejas
+// ── Activación ───────────────────────────────────────────────
 self.addEventListener('activate', event => {
+  console.log('[SW] Activado:', CACHE_VERSION);
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(
+    caches.keys().then(keys => {
+      return Promise.all(
         keys
           .filter(key => key !== CACHE_NAME)
-          .map(key => caches.delete(key))
-      )
-    )
+          .map(key => {
+            console.log('[SW] Borrando caché viejo:', key);
+            return caches.delete(key);
+          })
+      );
+    }).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Fetch: servir desde caché si existe, si no desde red
+// ── Interceptar peticiones ───────────────────────────────────
 self.addEventListener('fetch', event => {
-  // Solo interceptar GETs
+  // Solo interceptar peticiones GET
   if (event.request.method !== 'GET') return;
+
+  // No interceptar peticiones a Firebase
+  const url = event.request.url;
+  if (
+    url.includes('firebaseio.com') ||
+    url.includes('googleapis.com') ||
+    url.includes('firestore.googleapis.com') ||
+    url.includes('identitytoolkit.googleapis.com')
+  ) {
+    return;
+  }
 
   event.respondWith(
     caches.match(event.request)
       .then(cached => {
-        if (cached) return cached;
+        if (cached) {
+          // Devolver caché y actualizar en segundo plano
+          fetch(event.request)
+            .then(response => {
+              if (response && response.status === 200) {
+                caches.open(CACHE_NAME)
+                  .then(cache => cache.put(event.request, response));
+              }
+            })
+            .catch(() => {}); // Sin conexión — ignorar
+          return cached;
+        }
+
+        // No está en caché — pedir a la red
         return fetch(event.request)
           .then(response => {
-            // Cachear respuestas válidas de nuestra propia página
-            if (response && response.status === 200 && response.type === 'basic') {
-              const clone = response.clone();
-              caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-            }
+            if (!response || response.status !== 200) return response;
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME)
+              .then(cache => cache.put(event.request, responseClone));
             return response;
           })
           .catch(() => {
-            // Sin red y sin caché: devolver página principal como fallback
-            return caches.match('/index/') || caches.match('/index.html');
+            // Sin conexión y sin caché
+            if (event.request.destination === 'document') {
+              return caches.match('./index.html');
+            }
           });
       })
   );
 });
 
-// Escuchar mensajes desde la app principal
+// ── Mensajes desde la app ────────────────────────────────────
 self.addEventListener('message', event => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
+  if (!event.data) return;
+
+  if (event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+  }
+
+  if (event.data.type === 'GET_VERSION') {
+    event.ports[0].postMessage({ version: CACHE_VERSION });
   }
 });
