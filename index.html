@@ -84,11 +84,11 @@
 
     <!-- APP WRAPPER: Solo visible tras autenticación exitosa -->
     <div id="appWrapper">
-    <input type="file" id="input-excel" accept=".xlsx,.xls,.csv">
-    <input type="file" id="importDataInput" accept=".json" class="hidden">
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden">
+        <input type="file" id="importDataInput" accept=".json" class="hidden">
 
-    <div id="sbOverlay" onclick="sbClose()"></div>
-</div>
+        <!-- Overlay del Sidebar -->
+        <div id="sbOverlay" onclick="sbClose()"></div>
 
         <!-- SIDEBAR -->
         <nav id="sidebar" aria-label="Menú principal">
