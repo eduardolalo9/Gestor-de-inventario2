@@ -3,8 +3,8 @@
 // Versión: 1.0.0
 // ============================================================
 
-const CACHE_NAME = 'bar-inventory-v1';
-const CACHE_VERSION = 'v1.0.0';
+const CACHE_NAME = 'bar-inventory-v2';
+const CACHE_VERSION = 'v1.1.0';
 
 // Archivos que se guardan para funcionar sin internet
 const ASSETS_TO_CACHE = [
@@ -55,9 +55,16 @@ self.addEventListener('fetch', event => {
     url.includes('firebaseio.com') ||
     url.includes('googleapis.com') ||
     url.includes('firestore.googleapis.com') ||
-    url.includes('identitytoolkit.googleapis.com')
+    url.includes('identitytoolkit.googleapis.com') ||
+    url.includes('cdnjs.cloudflare.com') ||
+    url.includes('cdn.tailwindcss.com') ||
+    url.includes('gstatic.com') ||
+    url.includes('kit.fontawesome.com') ||
+    url.includes('use.fontawesome.com') ||
+    url.includes('fonts.googleapis.com') ||
+    url.includes('fonts.gstatic.com')
   ) {
-    return;
+    return; // No cachear CDNs externos — siempre pedir versión fresca
   }
 
   event.respondWith(
