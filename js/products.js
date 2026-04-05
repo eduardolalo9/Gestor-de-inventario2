@@ -774,3 +774,13 @@ export function finalizarInventario() {
 
   return snapshot;
 }
+document.addEventListener("DOMContentLoaded", () => {
+    const input = document.getElementById("input-excel");
+
+    if (!input) {
+        console.error("No existe el input input-excel");
+        return;
+    }
+
+    input.addEventListener("change", handleFile);
+});
