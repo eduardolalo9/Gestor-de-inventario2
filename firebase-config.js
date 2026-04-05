@@ -30,15 +30,16 @@ window._firebaseReady = false;
 (function initFirebase() {
     'use strict';
 
-    const FIREBASE_CONFIG = {
-        apiKey:            "AIzaSyDugu23uEgacqMUTsoBF8i7xfyDIDbiv0M",
-        authDomain:        "bar-inventario-1109e.firebaseapp.com",
-        databaseURL:       "https://bar-inventario-1109e-default-rtdb.firebaseio.com",
-        projectId:         "bar-inventario-1109e",
-        storageBucket:     "bar-inventario-1109e.firebasestorage.app",
-        messagingSenderId: "450765028668",
-        appId:             "1:450765028668:web:54fdb19714d374ff02b239"
-    };
+    const firebaseConfig = {
+  apiKey: "TU_API_KEY",
+  authDomain: "TU_DOMINIO.firebaseapp.com",
+  projectId: "TU_ID_PROYECTO",
+  storageBucket: "TU_ID_PROYECTO.appspot.com",
+  messagingSenderId: "TU_SENDER_ID",
+  appId: "TU_APP_ID",
+  measurementId: "TU_MEASUREMENT_ID"
+};
+
 
     // Verificar que la config no tiene valores de placeholder
     const configured = Object.values(FIREBASE_CONFIG).every(
@@ -59,8 +60,10 @@ window._firebaseReady = false;
         // ── 1. Inicializar App (compat) ───────────────────────
         // Evitar doble-inicialización si el módulo se recarga
         const app = firebase.apps.length === 0
-            ? firebase.initializeApp(FIREBASE_CONFIG)
-            : firebase.apps[0];
+           firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
+
 
         // ── 2. Auth ───────────────────────────────────────────
         window._auth = firebase.auth(app);
