@@ -19,6 +19,7 @@ import { INITIAL_PRODUCTS,
 import './notificaciones.js';
 import './ajustes.js';
 import './reportes.js';
+import './actions.js';   // FIX: expone en window todas las funciones de onClick
 
 console.info('[App] BarInventory arrancando…');
 
