@@ -2,8 +2,7 @@
 
 // 1. Pesos de Referencia (Fundamentales para cálculos de botellas abiertas)
 // Este es el valor que te faltaba y causaba el error en la consola
-export const PESO_BOTELLA_VACIA_OZ = 25.0; 
-
+export const PESO_BOTELLA_VACIA_OZ = 25.0;
 // 2. Factores de Conversión
 export const OZ_A_ML = 29.5735; // Para convertir el peso medido a volumen líquido
 
