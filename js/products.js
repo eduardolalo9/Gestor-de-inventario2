@@ -469,8 +469,7 @@ export function handleFileImport(event) {
 
   console.info('[Import] Archivo recibido:', file.name, file.size, 'bytes');
 
-  
-
+ 
   const validExtensions = ['.xlsx', '.xls', '.csv'];
   const fileName = file.name.toLowerCase();
   const isValid  = validExtensions.some(ext => fileName.endsWith(ext));
@@ -770,13 +769,3 @@ export function finalizarInventario() {
 
   return snapshot;
 }
-document.addEventListener("DOMContentLoaded", () => {
-    const input = document.getElementById("input-excel");
-
-    if (!input) {
-        console.error("No existe el input input-excel");
-        return;
-    }
-
-    input.addEventListener("change", handleFile);
-});
