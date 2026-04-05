@@ -1,21 +1,21 @@
 /**
- * js/actions.js — v1.0
+ * js/actions.js — CORREGIDO v2
  * ══════════════════════════════════════════════════════════════
  * Implementa y expone en window TODAS las funciones de acción
  * llamadas desde los onclick del HTML generado por render.js.
  *
- * PROBLEMA RESUELTO:
- *   render.js genera botones como:
- *     onclick="window.openProductModal()"
- *     onclick="window.addToCart(this.dataset.id)"
- *     onclick="window.editProduct(this.dataset.id)"
- *     ... etc.
- *   Pero ninguna de estas funciones estaba definida ni expuesta
- *   en window → "TypeError: window.X is not a function".
+ * CORRECCIÓN CRÍTICA (causa del "Verificando sesión…" infinito):
  *
- * CÓMO USARLO:
- *   En app.js, añadir al inicio de los imports:
- *     import './actions.js';
+ *   LÍNEA 31 — import de AREA_KEYS:
+ *     ❌ ANTES: AREA_KEYS from './products.js'
+ *     ✅ AHORA: AREA_KEYS from './constants.js'
+ *
+ *   products.js NO exporta AREA_KEYS — lo importa internamente desde
+ *   constants.js pero no lo re-exporta. El intento de importar un
+ *   símbolo inexistente lanza un SyntaxError que destruye todo el
+ *   árbol de módulos ES antes de que app.js llegue a ejecutar
+ *   initAuth(), dejando la Promise onAuthReady sin resolver y la
+ *   pantalla atascada en "Verificando sesión…" para siempre.
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -27,9 +27,9 @@ import { showNotification,
 import { deleteProduct as _deleteProduct,
          addProduct,
          updateProduct,
-         calcularStockTotal,
-         AREA_KEYS }                from './products.js';
-import { AREAS }                    from './constants.js';
+         calcularStockTotal }       from './products.js';
+import { AREAS,
+         AREA_KEYS }                from './constants.js'; // ← FIX: era './products.js'
 
 // ── Lazy import de render para evitar circularidad ─────────────
 const _render = () => import('./render.js').then(m => m.renderTab()).catch(() => {});
@@ -38,11 +38,6 @@ const _render = () => import('./render.js').then(m => m.renderTab()).catch(() =>
 //  PRODUCTOS — Modal de alta / edición
 // ═════════════════════════════════════════════════════════════
 
-/**
- * Abre el modal de producto.
- * Sin argumento → modo "Agregar nuevo".
- * Con productId  → modo "Editar existente".
- */
 function openProductModal(productId = null) {
     if (state.userRole !== 'admin') {
         showNotification('⛔ Solo el administrador puede modificar productos');
@@ -168,7 +163,6 @@ function openProductModal(productId = null) {
     document.body.appendChild(overlay);
 
     const close = () => overlay.remove();
-
     overlay.querySelector('#_pm_cancel').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
@@ -179,66 +173,47 @@ function openProductModal(productId = null) {
         const capacidad = parseFloat(overlay.querySelector('#_pm_capacidad').value) || null;
         const peso      = parseFloat(overlay.querySelector('#_pm_peso').value) || null;
 
-        if (!name) {
-            showNotification('⚠️ El nombre del producto es obligatorio');
-            return;
-        }
+        if (!name) { showNotification('⚠️ El nombre del producto es obligatorio'); return; }
 
         if (isEdit) {
-            updateProduct(productId, {
-                name, unit, group,
-                capacidadMl:        capacidad,
-                pesoBotellaLlenaOz: peso,
-            });
+            updateProduct(productId, { name, unit, group,
+                capacidadMl: capacidad, pesoBotellaLlenaOz: peso });
         } else {
             addProduct({ name, unit, group,
-                capacidadMl:        capacidad,
-                pesoBotellaLlenaOz: peso,
-            });
+                capacidadMl: capacidad, pesoBotellaLlenaOz: peso });
         }
 
         close();
         _render();
-
         if (state.syncEnabled && window._db) {
             import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
         }
     });
 
-    // Foco automático en nombre
     setTimeout(() => overlay.querySelector('#_pm_name')?.focus(), 50);
 }
 
-// ── editProduct: alias que abre el modal en modo edición ───────
-function editProduct(id) {
-    openProductModal(id);
-}
+function editProduct(id) { openProductModal(id); }
 
-// ── deleteProduct: llama al service y re-renderiza ─────────────
+// ── deleteProduct — usa await showConfirm() que ahora retorna Promise ──
 async function deleteProduct(id) {
     const product = state.products.find(p => p.id === id);
     if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
 
-    const ok = await showConfirm(
-        `¿Eliminar "${product.name}"?`,
-        'Esta acción no se puede deshacer.'
-    );
+    const ok = await showConfirm(`¿Eliminar "${product.name}"?\n\nEsta acción no se puede deshacer.`);
     if (!ok) return;
 
     _deleteProduct(id);
     _render();
-
     if (state.syncEnabled && window._db) {
         import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
     }
 }
 
-// ── deleteAllProducts ──────────────────────────────────────────
 async function deleteAllProducts() {
     if (state.userRole !== 'admin') return;
     const ok = await showConfirm(
-        '¿Eliminar TODOS los productos?',
-        'Esta acción borrará el catálogo completo y no se puede deshacer.'
+        '¿Eliminar TODOS los productos?\n\nSe borrará el catálogo completo. No se puede deshacer.'
     );
     if (!ok) return;
 
@@ -249,7 +224,6 @@ async function deleteAllProducts() {
     saveToLocalStorage();
     showNotification('🗑️ Todos los productos eliminados');
     _render();
-
     if (state.syncEnabled && window._db) {
         import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
     }
@@ -268,12 +242,8 @@ function addToCart(productId) {
         existing.quantity += 1;
         showNotification(`🛒 ${product.name} → ${existing.quantity}`);
     } else {
-        state.cart.push({
-            id:       product.id,
-            name:     product.name,
-            unit:     product.unit || 'Unidad',
-            quantity: 1,
-        });
+        state.cart.push({ id: product.id, name: product.name,
+                          unit: product.unit || 'Unidad', quantity: 1 });
         showNotification(`🛒 ${product.name} agregado al carrito`);
     }
 
@@ -295,21 +265,17 @@ function shareOrderWhatsApp(orderId) {
         `Fecha: ${order.date || '—'}`,
         '',
         '*Productos:*',
-        ...(order.products || []).map(p =>
-            `• ${p.name} (${p.unit || 'Unid'}): *${p.quantity}*`
-        ),
+        ...(order.products || []).map(p => `• ${p.name} (${p.unit || 'Unid'}): *${p.quantity}*`),
         '',
-        order.note ? `📝 ${order.note}` : '',
-    ].filter(l => l !== undefined).join('\n');
+        order.note ? `📝 ${order.note}` : null,
+    ].filter(l => l !== null).join('\n');
 
-    const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
-    window.open(url, '_blank');
+    window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
 }
 
 async function deleteOrder(orderId) {
-    const ok = await showConfirm('¿Eliminar este pedido?', 'No se puede deshacer.');
+    const ok = await showConfirm('¿Eliminar este pedido?\n\nNo se puede deshacer.');
     if (!ok) return;
-
     state.orders = state.orders.filter(o => o.id !== orderId);
     saveToLocalStorage();
     showNotification('🗑️ Pedido eliminado');
@@ -328,11 +294,8 @@ function switchArea(area) {
 function saveInventory(area) {
     if (!area) area = state.selectedArea;
 
-    const productosConStock = state.products.filter(p =>
-        p.stockByArea && (p.stockByArea[area] || 0) > 0
-    );
-
-    if (productosConStock.length === 0) {
+    const conStock = state.products.filter(p => p.stockByArea?.[area] > 0);
+    if (conStock.length === 0) {
         showNotification('⚠️ No hay conteo en esta área para guardar');
         return;
     }
@@ -342,22 +305,15 @@ function saveInventory(area) {
         date:          new Date().toLocaleDateString('es-MX'),
         area,
         usuario:       state.currentUser?.email || state.auditCurrentUser?.userName || 'Sistema',
-        totalProducts: state.products.reduce((s, p) => {
-            return s + (p.stockByArea?.[area] || 0);
-        }, 0),
-        products: state.products
+        totalProducts: state.products.reduce((s, p) => s + (p.stockByArea?.[area] || 0), 0),
+        products:      state.products
             .filter(p => p.stockByArea?.[area] > 0)
-            .map(p => ({
-                id:    p.id,
-                name:  p.name,
-                unit:  p.unit,
-                group: p.group,
-                stock: p.stockByArea?.[area] || 0,
-            })),
+            .map(p => ({ id: p.id, name: p.name, unit: p.unit,
+                         group: p.group, stock: p.stockByArea?.[area] || 0 })),
     };
 
-    state.inventories.unshift(snapshot);      // más reciente primero
-    if (state.inventories.length > 50) state.inventories.pop(); // límite de 50
+    state.inventories.unshift(snapshot);
+    if (state.inventories.length > 50) state.inventories.pop();
 
     saveToLocalStorage();
     showNotification(`💾 Inventario de ${AREAS[area] || area} guardado`);
@@ -372,30 +328,25 @@ function shareInventoryWhatsApp(inventoryId) {
     const inv = state.inventories.find(i => i.id === inventoryId);
     if (!inv) { showNotification('⚠️ Inventario no encontrado'); return; }
 
-    const areaLabel = AREAS[inv.area] || inv.area || '—';
     const lines = [
         `📊 *Inventario ${inv.id}*`,
-        `Área: ${areaLabel}`,
+        `Área: ${AREAS[inv.area] || inv.area || '—'}`,
         `Fecha: ${inv.date || '—'}`,
         `Usuario: ${inv.usuario || '—'}`,
         '',
         '*Productos:*',
-        ...(inv.products || []).map(p =>
-            `• ${p.name}: *${(p.stock || 0).toFixed(2)}* ${p.unit || ''}`
-        ),
+        ...(inv.products || []).map(p => `• ${p.name}: *${(p.stock||0).toFixed(2)}* ${p.unit||''}`),
         '',
         `Total unidades: *${(inv.totalProducts || 0).toFixed(2)}*`,
     ].join('\n');
 
-    const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
-    window.open(url, '_blank');
+    window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
 }
 
 async function deleteInventory(inventoryId) {
     if (state.userRole !== 'admin') return;
-    const ok = await showConfirm('¿Eliminar este registro de inventario?', 'No se puede deshacer.');
+    const ok = await showConfirm('¿Eliminar este registro de inventario?\n\nNo se puede deshacer.');
     if (!ok) return;
-
     state.inventories = state.inventories.filter(i => i.id !== inventoryId);
     saveToLocalStorage();
     showNotification('🗑️ Registro eliminado');
@@ -405,15 +356,12 @@ async function deleteInventory(inventoryId) {
 async function resetAllInventario() {
     if (state.userRole !== 'admin') return;
     const ok = await showConfirm(
-        '¿Resetear TODO el inventario?',
-        'Se pondrán en cero todos los conteos. No se puede deshacer.'
+        '¿Resetear TODO el inventario?\n\nSe pondrán en cero todos los conteos. No se puede deshacer.'
     );
     if (!ok) return;
 
     state.inventarioConteo = {};
-    state.products.forEach(p => {
-        p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
-    });
+    state.products.forEach(p => { p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 }; });
     saveToLocalStorage();
     showNotification('🔄 Inventario reseteado a cero');
     _render();
@@ -423,7 +371,6 @@ async function resetAllInventario() {
     }
 }
 
-// ── openInventarioModal — modal para contar producto en área ───
 function openInventarioModal(productId) {
     const product = state.products.find(p => p.id === productId);
     if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
@@ -458,15 +405,11 @@ function openInventarioModal(productId) {
           <button id="_inv_cancel"
             style="flex:1;padding:9px;border-radius:var(--r-md);
                    background:var(--surface);border:1px solid var(--border-mid);
-                   color:var(--txt-secondary);cursor:pointer;">
-            Cancelar
-          </button>
+                   color:var(--txt-secondary);cursor:pointer;">Cancelar</button>
           <button id="_inv_save"
             style="flex:2;padding:9px;border-radius:var(--r-md);
                    background:linear-gradient(135deg,#8b5cf6,#3b82f6);
-                   border:none;color:#fff;font-weight:700;cursor:pointer;">
-            Guardar
-          </button>
+                   border:none;color:#fff;font-weight:700;cursor:pointer;">Guardar</button>
         </div>
       </div>`;
 
@@ -512,36 +455,29 @@ function exportToExcel(modo = 'INVENTARIO') {
         return;
     }
 
-    let rows = [];
-    let sheetName = 'Inventario';
-    let fileName  = `inventario_${new Date().toISOString().slice(0,10)}.xlsx`;
-
-    if (modo === 'INVENTARIO') {
-        sheetName = 'Inventario';
-        rows = [
-            ['ID', 'Producto', 'Unidad', 'Grupo', 'Almacén', 'Barra 1', 'Barra 2', 'Total'],
-            ...state.products.map(p => {
-                const { porArea, total } = calcularStockTotal(p.id);
-                return [
-                    p.id,
-                    p.name,
-                    p.unit  || '',
-                    p.group || 'General',
-                    (porArea.almacen || 0).toFixed(4),
-                    (porArea.barra1  || 0).toFixed(4),
-                    (porArea.barra2  || 0).toFixed(4),
-                    total.toFixed(4),
-                ];
-            }),
-        ];
-    } else {
-        showNotification(`⚠️ Modo de exportación "${modo}" desconocido`);
+    if (modo !== 'INVENTARIO') {
+        showNotification(`⚠️ Modo "${modo}" desconocido`);
         return;
     }
 
-    const ws = window.XLSX.utils.aoa_to_sheet(rows);
-    const wb = window.XLSX.utils.book_new();
-    window.XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    const rows = [
+        ['ID', 'Producto', 'Unidad', 'Grupo', 'Almacén', 'Barra 1', 'Barra 2', 'Total'],
+        ...state.products.map(p => {
+            const { porArea, total } = calcularStockTotal(p.id);
+            return [
+                p.id, p.name, p.unit || '', p.group || 'General',
+                (porArea.almacen || 0).toFixed(4),
+                (porArea.barra1  || 0).toFixed(4),
+                (porArea.barra2  || 0).toFixed(4),
+                total.toFixed(4),
+            ];
+        }),
+    ];
+
+    const ws  = window.XLSX.utils.aoa_to_sheet(rows);
+    const wb  = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+    const fileName = `inventario_${new Date().toISOString().slice(0,10)}.xlsx`;
     window.XLSX.writeFile(wb, fileName);
     showNotification(`📊 Excel exportado: ${fileName}`);
 }
@@ -556,16 +492,15 @@ function exportarAuditoriaExcel() {
         ['ID', 'Producto', 'Unidad', 'Grupo',
          'Almacén Enteras', 'Almacén Abiertas',
          'Barra1 Enteras',  'Barra1 Abiertas',
-         'Barra2 Enteras',  'Barra2 Abiertas',
-         'Total General'],
+         'Barra2 Enteras',  'Barra2 Abiertas', 'Total'],
     ];
 
     state.products.forEach(p => {
         const row = [p.id, p.name, p.unit || '', p.group || 'General'];
         let total = 0;
-        ['almacen', 'barra1', 'barra2'].forEach(area => {
-            const c = state.auditoriaConteo[p.id]?.[area];
-            const enteras  = c?.enteras  || 0;
+        AREA_KEYS.forEach(area => {
+            const c        = state.auditoriaConteo[p.id]?.[area];
+            const enteras  = c?.enteras || 0;
             const abiertas = Array.isArray(c?.abiertas) ? c.abiertas.length : 0;
             row.push(enteras, abiertas);
             total += enteras + abiertas * 0.5;
@@ -574,8 +509,8 @@ function exportarAuditoriaExcel() {
         rows.push(row);
     });
 
-    const ws = window.XLSX.utils.aoa_to_sheet(rows);
-    const wb = window.XLSX.utils.book_new();
+    const ws  = window.XLSX.utils.aoa_to_sheet(rows);
+    const wb  = window.XLSX.utils.book_new();
     window.XLSX.utils.book_append_sheet(wb, ws, 'Auditoría');
     const fileName = `auditoria_${new Date().toISOString().slice(0,10)}.xlsx`;
     window.XLSX.writeFile(wb, fileName);
@@ -583,21 +518,11 @@ function exportarAuditoriaExcel() {
 }
 
 // ═════════════════════════════════════════════════════════════
-//  PEDIDO / CARRITO — Modal para confirmar y enviar por WhatsApp
+//  MODAL DE PEDIDO / CARRITO
 // ═════════════════════════════════════════════════════════════
 
-/**
- * openOrderModal() — abre el modal de confirmación de pedido.
- * Muestra los productos del carrito, permite ajustar cantidades,
- * añadir proveedor + nota y genera el pedido por WhatsApp.
- *
- * Llamado desde ui.js → updateHeaderActions() → botón 🛒 del header.
- */
 function openOrderModal() {
-    if (state.cart.length === 0) {
-        showNotification('🛒 El carrito está vacío');
-        return;
-    }
+    if (state.cart.length === 0) { showNotification('🛒 El carrito está vacío'); return; }
 
     const overlay = document.createElement('div');
     overlay.id = '_orderModalOverlay';
@@ -606,7 +531,7 @@ function openOrderModal() {
         'display:flex;align-items:flex-end;justify-content:center;' +
         'animation:fadeIn 0.15s ease both;';
 
-    const itemsHtml = state.cart.map((item, idx) => `
+    const buildItemsHtml = () => state.cart.map((item, idx) => `
       <div style="display:flex;align-items:center;gap:8px;
                   padding:8px 0;border-bottom:1px solid var(--border);">
         <div style="flex:1;min-width:0;">
@@ -617,20 +542,17 @@ function openOrderModal() {
           <div style="font-size:0.68rem;color:var(--txt-muted);">${escapeHtml(item.unit || '')}</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-          <button onclick="window._cartDecrement(${idx})"
+          <button onclick="window._cartDec(${idx})"
             style="width:26px;height:26px;border-radius:50%;border:1px solid var(--border-mid);
-                   background:var(--surface);color:var(--txt-primary);font-size:1rem;
-                   cursor:pointer;display:flex;align-items:center;justify-content:center;">−</button>
+                   background:var(--surface);color:var(--txt-primary);font-size:1rem;cursor:pointer;">−</button>
           <span style="font-weight:700;font-size:0.9rem;color:var(--txt-primary);
                        min-width:24px;text-align:center;">${item.quantity}</span>
-          <button onclick="window._cartIncrement(${idx})"
+          <button onclick="window._cartInc(${idx})"
             style="width:26px;height:26px;border-radius:50%;border:1px solid var(--border-mid);
-                   background:var(--surface);color:var(--txt-primary);font-size:1rem;
-                   cursor:pointer;display:flex;align-items:center;justify-content:center;">+</button>
-          <button onclick="window._cartRemove(${idx})"
+                   background:var(--surface);color:var(--txt-primary);font-size:1rem;cursor:pointer;">+</button>
+          <button onclick="window._cartRem(${idx})"
             style="width:26px;height:26px;border-radius:50%;border:none;
-                   background:var(--red-dim,#fee2e2);color:var(--red-text,#dc2626);
-                   font-size:0.7rem;cursor:pointer;">✕</button>
+                   background:#fee2e2;color:#dc2626;font-size:0.7rem;cursor:pointer;">✕</button>
         </div>
       </div>`).join('');
 
@@ -638,18 +560,13 @@ function openOrderModal() {
       <div style="background:var(--card);border-radius:var(--r-lg) var(--r-lg) 0 0;
                   padding:20px 20px 28px;width:100%;max-width:480px;
                   max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-modal);">
-
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-          <p style="font-weight:700;font-size:1rem;color:var(--txt-primary);margin:0;">
-            🛒 Confirmar pedido
-          </p>
+          <p style="font-weight:700;font-size:1rem;color:var(--txt-primary);margin:0;">🛒 Confirmar pedido</p>
           <button id="_om_close"
             style="background:none;border:none;font-size:1.3rem;cursor:pointer;
-                   color:var(--txt-muted);line-height:1;">×</button>
+                   color:var(--txt-muted);">×</button>
         </div>
-
-        <div id="_om_items">${itemsHtml}</div>
-
+        <div id="_om_items">${buildItemsHtml()}</div>
         <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px;">
           <div>
             <label style="display:block;font-size:0.7rem;font-weight:700;
@@ -672,7 +589,6 @@ function openOrderModal() {
                      border-radius:var(--r-md);color:var(--txt-primary);font-size:0.85rem;"></textarea>
           </div>
         </div>
-
         <button id="_om_send"
           style="width:100%;margin-top:16px;padding:12px;
                  background:linear-gradient(135deg,#25d366,#128c7e);
@@ -680,61 +596,32 @@ function openOrderModal() {
                  font-size:0.9rem;font-weight:700;cursor:pointer;">
           📲 Enviar por WhatsApp
         </button>
-
       </div>`;
 
     document.body.appendChild(overlay);
 
-    // Helpers de carrito expuestos temporalmente en window (eliminados al cerrar)
-    const refreshItems = () => {
-        const container = overlay.querySelector('#_om_items');
-        if (!container) return;
+    const refresh = () => {
+        const c = overlay.querySelector('#_om_items');
+        if (!c) return;
         if (state.cart.length === 0) { close(); return; }
-        container.innerHTML = state.cart.map((item, idx) => `
-          <div style="display:flex;align-items:center;gap:8px;
-                      padding:8px 0;border-bottom:1px solid var(--border);">
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:0.82rem;font-weight:600;color:var(--txt-primary);">
-                ${escapeHtml(item.name)}
-              </div>
-              <div style="font-size:0.68rem;color:var(--txt-muted);">${escapeHtml(item.unit || '')}</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-              <button onclick="window._cartDecrement(${idx})"
-                style="width:26px;height:26px;border-radius:50%;border:1px solid var(--border-mid);
-                       background:var(--surface);color:var(--txt-primary);font-size:1rem;cursor:pointer;">−</button>
-              <span style="font-weight:700;font-size:0.9rem;color:var(--txt-primary);
-                           min-width:24px;text-align:center;">${item.quantity}</span>
-              <button onclick="window._cartIncrement(${idx})"
-                style="width:26px;height:26px;border-radius:50%;border:1px solid var(--border-mid);
-                       background:var(--surface);color:var(--txt-primary);font-size:1rem;cursor:pointer;">+</button>
-              <button onclick="window._cartRemove(${idx})"
-                style="width:26px;height:26px;border-radius:50%;border:none;
-                       background:#fee2e2;color:#dc2626;font-size:0.7rem;cursor:pointer;">✕</button>
-            </div>
-          </div>`).join('');
+        c.innerHTML = buildItemsHtml();
     };
 
-    window._cartIncrement = (idx) => {
-        if (state.cart[idx]) { state.cart[idx].quantity += 1; refreshItems(); }
-    };
-    window._cartDecrement = (idx) => {
+    window._cartInc = idx => { if (state.cart[idx]) { state.cart[idx].quantity += 1; refresh(); } };
+    window._cartDec = idx => {
         if (state.cart[idx]) {
             state.cart[idx].quantity -= 1;
             if (state.cart[idx].quantity <= 0) state.cart.splice(idx, 1);
-            refreshItems();
+            refresh();
         }
     };
-    window._cartRemove = (idx) => {
-        state.cart.splice(idx, 1);
-        refreshItems();
-    };
+    window._cartRem = idx => { state.cart.splice(idx, 1); refresh(); };
 
     const close = () => {
         overlay.remove();
-        delete window._cartIncrement;
-        delete window._cartDecrement;
-        delete window._cartRemove;
+        delete window._cartInc;
+        delete window._cartDec;
+        delete window._cartRem;
         saveToLocalStorage();
         _render();
     };
@@ -747,23 +634,17 @@ function openOrderModal() {
 
         const supplier = (overlay.querySelector('#_om_supplier').value || '').trim() || 'Proveedor';
         const note     = (overlay.querySelector('#_om_note').value || '').trim();
-        const now      = new Date();
-        const fecha    = now.toLocaleDateString('es-MX');
+        const fecha    = new Date().toLocaleDateString('es-MX');
         const orderId  = 'PED-' + Date.now();
 
-        // Guardar pedido en historial
         const order = {
-            id:       orderId,
-            supplier,
-            date:     fecha,
-            note,
+            id: orderId, supplier, date: fecha, note,
             total:    state.cart.reduce((s, i) => s + i.quantity, 0),
             products: state.cart.map(i => ({ ...i })),
         };
         state.orders.unshift(order);
         if (state.orders.length > 100) state.orders.pop();
 
-        // Formatear mensaje WhatsApp
         const lines = [
             `📦 *Pedido ${orderId}*`,
             `Proveedor: *${supplier}*`,
@@ -772,25 +653,22 @@ function openOrderModal() {
             '*Productos:*',
             ...state.cart.map(i => `• ${i.name} (${i.unit || 'Unid'}): *${i.quantity}*`),
             '',
-            note ? `📝 Nota: ${note}` : '',
+            note ? `📝 Nota: ${note}` : null,
             `Total items: *${order.total}*`,
-        ].filter(l => l !== undefined).join('\n');
+        ].filter(l => l !== null).join('\n');
 
-        // Limpiar carrito y cerrar
         state.cart = [];
         saveToLocalStorage();
         close();
 
-        const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
-        window.open(url, '_blank');
+        window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
         showNotification(`✅ Pedido ${orderId} enviado`);
     });
 }
 
 // ═════════════════════════════════════════════════════════════
-//  BINDINGS GLOBALES — exponer TODO en window
+//  BINDINGS GLOBALES
 // ═════════════════════════════════════════════════════════════
-
 window.openProductModal       = openProductModal;
 window.editProduct            = editProduct;
 window.deleteProduct          = deleteProduct;
