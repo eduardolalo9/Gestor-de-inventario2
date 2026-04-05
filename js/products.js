@@ -23,7 +23,7 @@
 import { state } from './state.js';
 import { showNotification } from './ui.js';
 import { saveToLocalStorage } from './storage.js';
-import { AREA_KEYS, OZ_PER_ML, PESO_BOTELLA_VACIA_OZ } from './constants.js';
+import { PESO_BOTELLA_VACIA_OZ } from './constants.js';
 
 // ═════════════════════════════════════════════════════════════
 // HELPER: parsear números de Excel
