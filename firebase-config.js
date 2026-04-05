@@ -1,6 +1,8 @@
 /**
  * firebase-config.js
- * ══════════════════════════════════════════════════════════════
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+import { getAuth } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";══════════════════════════════════════════════════════════════
  * Inicialización de Firebase (SDK compat v10, cargado globalmente).
  *
  * Expone en window:
@@ -41,15 +43,18 @@ window._firebaseReady = false;
     }
 
     try {
-        // ═══ PASO 1: Inicializar App ═══
-        firebase.initializeApp(FIREBASE_CONFIG);
+       // 1. Inicializar App
+const app = initializeApp(firebaseConfig);
 
-        // ═══ PASO 2: Auth (ANTES de Firestore) ═══
-        window._auth = firebase.auth();
+// 2. Inicializar Autenticación
+const auth = getAuth(app);
 
-        // ═══ PASO 3: Firestore ═══
-        window._db = firebase.firestore();
+// 3. Inicializar Firestore con MODO OFFLINE ACTIVADO (Local Cache)
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})
+});
 
+export { app, auth, db };
         // ═══ PASO 4: Persistencia offline ═══
         // NOTA: En Firebase v10.12+, enableIndexedDbPersistence
         // puede no existir. Usar try/catch SEPARADO para que
