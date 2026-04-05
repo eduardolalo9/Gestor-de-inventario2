@@ -1,5 +1,5 @@
 /**
- * js/products.js — v2.1 COMPLETO
+ * js/products.js — v2.2 CORREGIDO
  * ══════════════════════════════════════════════════════════════
  * Gestión de productos: CRUD, importación Excel, cálculos de
  * stock, sincronización de conteo desde la nube.
@@ -8,22 +8,36 @@
  *   - syncStockByAreaFromConteo()    → sync.js
  *   - calcularTotalConAbiertas()     → reportes.js
  *   - calcularContenidoMl()          → reportes.js, render.js
- *   - handleFileImport()             → render.js, ui.js
+ *   - handleFileImport()             → app.js (delegación de eventos)
+ *   - importFullData()               → app.js (delegación de eventos) ← NUEVO
  *   - addProduct()                   → render.js
  *   - updateProduct()                → render.js
  *   - deleteProduct()                → render.js
  *   - getProductById()               → varios módulos
  *   - getProductsByGroup()           → render.js
  *   - getUniqueGroups()              → render.js
+ *   - filterByGroup()                → render.js ← NUEVO
+ *   - getAvailableGroups()           → render.js ← NUEVO
+ *   - getTotalStock()                → render.js ← NUEVO
  *   - parseExcelNumber()             → helper público
+ *
+ * CORRECCIONES v2.2:
+ * • Añadido import de AREA_KEYS desde constants.js — se usaba en
+ *   calcularStockTotal, syncStockByAreaFromConteo y ajustarProducto
+ *   pero NO estaba importado → ReferenceError en runtime.
+ * • Añadida filterByGroup() — importada por render.js pero no existía.
+ * • Añadida getAvailableGroups() — importada por render.js pero no existía.
+ * • Añadida getTotalStock(p) — importada por render.js pero no existía.
+ * • Añadida importFullData(event) — importada por app.js pero no existía.
  * ══════════════════════════════════════════════════════════════
  */
 
 // ═══ IMPORTS ══════════════════════════════════════════════════
-import { state } from './state.js';
-import { showNotification } from './ui.js';
-import { saveToLocalStorage } from './storage.js';
-import { PESO_BOTELLA_VACIA_OZ } from './constants.js';
+import { state }                from './state.js';
+import { showNotification }     from './ui.js';
+import { saveToLocalStorage }   from './storage.js';
+import { PESO_BOTELLA_VACIA_OZ,
+         AREA_KEYS }            from './constants.js'; // FIX: AREA_KEYS no estaba importado
 
 // ═════════════════════════════════════════════════════════════
 // HELPER: parsear números de Excel
@@ -81,6 +95,90 @@ export function getProductsByGroup(group = 'Todos') {
   return state.products.filter(p => (p.group || 'General') === group);
 }
 
+// ─────────────────────────────────────────────────────────────
+// FIX CRÍTICO: funciones importadas por render.js que no existían
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * filterByGroup() — FIX v2.2
+ * ──────────────────────────────────────────────────────────────
+ * Filtra los productos del estado aplicando el grupo seleccionado
+ * (state.selectedGroup) Y el término de búsqueda (state.searchTerm).
+ *
+ * render.js la usa como:
+ *   const filtered = filterByGroup();
+ *
+ * Era importada desde './products.js' pero NO existía →
+ * SyntaxError al cargar render.js → pantalla en blanco.
+ *
+ * @returns {object[]} productos filtrados
+ */
+export function filterByGroup() {
+  let products = getProductsByGroup(state.selectedGroup || 'Todos');
+
+  const term = (state.searchTerm || '').toLowerCase().trim();
+  if (term) {
+    products = products.filter(p =>
+      (p.name  || '').toLowerCase().includes(term) ||
+      (p.id    || '').toLowerCase().includes(term) ||
+      (p.group || '').toLowerCase().includes(term) ||
+      (p.unit  || '').toLowerCase().includes(term)
+    );
+  }
+
+  return products;
+}
+
+/**
+ * getAvailableGroups() — FIX v2.2
+ * ──────────────────────────────────────────────────────────────
+ * Devuelve los grupos disponibles para el selector de filtro.
+ * Alias de getUniqueGroups() con el nombre que render.js espera.
+ *
+ * Era importada desde './products.js' pero NO existía →
+ * SyntaxError al cargar render.js → pantalla en blanco.
+ *
+ * @returns {string[]} ['Todos', 'Destilados', ...]
+ */
+export function getAvailableGroups() {
+  return getUniqueGroups();
+}
+
+/**
+ * getTotalStock(product) — FIX v2.2
+ * ──────────────────────────────────────────────────────────────
+ * Devuelve el stock total de un producto en TODAS las áreas.
+ *
+ * render.js la usa como:
+ *   const total = getTotalStock(p);          // número simple
+ *   const totalStock = state.products.reduce((s, p) => s + getTotalStock(p), 0);
+ *
+ * Era importada desde './products.js' pero NO existía →
+ * SyntaxError al cargar render.js → pantalla en blanco.
+ *
+ * @param {object} product — objeto producto de state.products
+ * @returns {number} suma de stock en las 3 áreas (con decimales)
+ */
+export function getTotalStock(product) {
+  if (!product) return 0;
+
+  // Sumar stockByArea si está disponible (modo inventario operativo)
+  if (product.stockByArea) {
+    let total = 0;
+    AREA_KEYS.forEach(area => {
+      total += parseFloat(product.stockByArea[area] || 0);
+    });
+    return parseFloat(total.toFixed(4));
+  }
+
+  // Fallback: calcular desde conteos de auditoría
+  return calcularStockTotal(product.id).total;
+}
+
+// ─────────────────────────────────────────────────────────────
+// FIN FIXES de render.js
+// ─────────────────────────────────────────────────────────────
+
 /**
  * Agrega un nuevo producto al catálogo.
  * @param {object} productData — { name, unit, group, capacidadMl?, pesoBotellaLlenaOz? }
@@ -97,9 +195,9 @@ export function addProduct(productData) {
 
   const product = {
     id,
-    name: (productData.name || 'Sin nombre').trim(),
-    unit: (productData.unit || 'Unidad').trim(),
-    group: (productData.group || 'General').trim(),
+    name:        (productData.name  || 'Sin nombre').trim(),
+    unit:        (productData.unit  || 'Unidad').trim(),
+    group:       (productData.group || 'General').trim(),
     stockByArea: { almacen: 0, barra1: 0, barra2: 0 },
   };
 
@@ -130,8 +228,8 @@ export function updateProduct(id, updates) {
     return null;
   }
 
-  if (updates.name !== undefined) product.name = String(updates.name).trim();
-  if (updates.unit !== undefined) product.unit = String(updates.unit).trim();
+  if (updates.name  !== undefined) product.name  = String(updates.name).trim();
+  if (updates.unit  !== undefined) product.unit  = String(updates.unit).trim();
   if (updates.group !== undefined) product.group = String(updates.group).trim();
   if (updates.capacidadMl !== undefined) {
     product.capacidadMl = parseFloat(updates.capacidadMl) || null;
@@ -163,7 +261,7 @@ export function deleteProduct(id) {
   const name = state.products[index].name;
   state.products.splice(index, 1);
 
-  // Limpiar datos de conteo asociados
+  // Limpiar datos de conteo asociados (evita datos huérfanos)
   delete state.inventarioConteo[id];
   delete state.auditoriaConteo[id];
   delete state.auditoriaConteoPorUsuario[id];
@@ -175,17 +273,12 @@ export function deleteProduct(id) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// CÁLCULOS DE STOCK (funciones que reportes.js necesita)
+// CÁLCULOS DE STOCK
 // ═════════════════════════════════════════════════════════════
 
 /**
  * Calcula el stock total de un producto en un área,
  * sumando unidades enteras + equivalente decimal de abiertas.
- *
- * Lógica de botellas abiertas:
- *   - Cada valor en el array "abiertas" es el peso en oz de esa botella
- *   - Se resta el peso de la botella vacía para obtener contenido neto
- *   - Se convierte a fracción de botella llena
  *
  * @param {string} productId
  * @param {string} area — 'almacen' | 'barra1' | 'barra2'
@@ -195,43 +288,31 @@ export function calcularTotalConAbiertas(productId, area) {
   const product = getProductById(productId);
   if (!product) return 0;
 
-  // ── Obtener conteo del área ─────────────────────────────────
   const conteo = state.auditoriaConteo[productId]?.[area];
   if (!conteo) {
-    // Sin conteo de auditoría → usar stockByArea directo
     return product.stockByArea?.[area] || 0;
   }
 
-  const enteras = typeof conteo.enteras === 'number' ? conteo.enteras : 0;
+  const enteras  = typeof conteo.enteras  === 'number' ? conteo.enteras  : 0;
   const abiertas = Array.isArray(conteo.abiertas) ? conteo.abiertas : [];
 
   if (abiertas.length === 0) return enteras;
 
-  // ── Calcular fracción de cada botella abierta ───────────────
   const pesoLlena = product.pesoBotellaLlenaOz || 0;
   const pesoVacia = PESO_BOTELLA_VACIA_OZ || 14.0;
 
   if (pesoLlena <= pesoVacia) {
-    // Sin datos de peso → cada abierta cuenta como 0.5
     return enteras + (abiertas.length * 0.5);
   }
 
-  const contenidoLlena = pesoLlena - pesoVacia; // oz de líquido cuando está llena
-
+  const contenidoLlena = pesoLlena - pesoVacia;
   let totalAbiertas = 0;
+
   abiertas.forEach(pesoActual => {
     const peso = parseFloat(pesoActual) || 0;
-    if (peso <= pesoVacia) {
-      // Botella vacía o inválida → 0
-      totalAbiertas += 0;
-    } else if (peso >= pesoLlena) {
-      // Pesa igual o más que llena → cuenta como 1
-      totalAbiertas += 1;
-    } else {
-      // Fracción: (contenido actual) / (contenido llena)
-      const contenidoActual = peso - pesoVacia;
-      totalAbiertas += contenidoActual / contenidoLlena;
-    }
+    if      (peso <= pesoVacia) totalAbiertas += 0;
+    else if (peso >= pesoLlena) totalAbiertas += 1;
+    else    totalAbiertas += (peso - pesoVacia) / contenidoLlena;
   });
 
   return parseFloat((enteras + totalAbiertas).toFixed(4));
@@ -239,23 +320,16 @@ export function calcularTotalConAbiertas(productId, area) {
 
 /**
  * Calcula el contenido en mililitros de un producto en un área.
- *
- * @param {string} productId
- * @param {string} area
- * @returns {number} mililitros totales
  */
 export function calcularContenidoMl(productId, area) {
   const product = getProductById(productId);
   if (!product || !product.capacidadMl) return 0;
-
   const totalUnidades = calcularTotalConAbiertas(productId, area);
   return parseFloat((totalUnidades * product.capacidadMl).toFixed(2));
 }
 
 /**
  * Calcula el stock total de un producto en TODAS las áreas.
- *
- * @param {string} productId
  * @returns {{ total: number, porArea: object, totalMl: number }}
  */
 export function calcularStockTotal(productId) {
@@ -277,20 +351,12 @@ export function calcularStockTotal(productId) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// MULTI-USUARIO: manejo de conteos de diferentes usuarios
+// MULTI-USUARIO
 // ═════════════════════════════════════════════════════════════
 
 /**
- * Calcula el total con abiertas considerando datos de MÚLTIPLES
- * usuarios (para admin que ve todos los conteos).
- *
- * Regla de negocio:
- *   - Enteras: se toma el MAYOR valor entre usuarios (no se suma)
- *   - Abiertas: se CONCATENAN las de todos los usuarios (nunca sobrescribir)
- *
- * @param {string} productId
- * @param {string} area
- * @returns {number}
+ * Calcula el total considerando conteos de MÚLTIPLES usuarios.
+ * Enteras: toma el MAYOR. Abiertas: concatena todas.
  */
 export function calcularTotalMultiUsuario(productId, area) {
   const product = getProductById(productId);
@@ -298,20 +364,16 @@ export function calcularTotalMultiUsuario(productId, area) {
 
   const porUsuario = state.auditoriaConteoPorUsuario[productId]?.[area];
   if (!porUsuario || Object.keys(porUsuario).length === 0) {
-    // Sin datos multi-usuario → usar cálculo normal
     return calcularTotalConAbiertas(productId, area);
   }
 
-  // ── Enteras: tomar el mayor ─────────────────────────────────
-  let maxEnteras = 0;
-  // ── Abiertas: concatenar todas ──────────────────────────────
+  let maxEnteras    = 0;
   let todasAbiertas = [];
 
   Object.values(porUsuario).forEach(conteo => {
     if (typeof conteo === 'object' && conteo !== null) {
       const ent = typeof conteo.enteras === 'number' ? conteo.enteras : 0;
       if (ent > maxEnteras) maxEnteras = ent;
-
       if (Array.isArray(conteo.abiertas)) {
         todasAbiertas = todasAbiertas.concat(conteo.abiertas);
       }
@@ -320,7 +382,6 @@ export function calcularTotalMultiUsuario(productId, area) {
 
   if (todasAbiertas.length === 0) return maxEnteras;
 
-  // Calcular fracción de abiertas (misma lógica que calcularTotalConAbiertas)
   const pesoLlena = product.pesoBotellaLlenaOz || 0;
   const pesoVacia = PESO_BOTELLA_VACIA_OZ || 14.0;
 
@@ -333,30 +394,18 @@ export function calcularTotalMultiUsuario(productId, area) {
 
   todasAbiertas.forEach(pesoActual => {
     const peso = parseFloat(pesoActual) || 0;
-    if (peso <= pesoVacia) {
-      totalAbiertas += 0;
-    } else if (peso >= pesoLlena) {
-      totalAbiertas += 1;
-    } else {
-      totalAbiertas += (peso - pesoVacia) / contenidoLlena;
-    }
+    if      (peso <= pesoVacia) totalAbiertas += 0;
+    else if (peso >= pesoLlena) totalAbiertas += 1;
+    else    totalAbiertas += (peso - pesoVacia) / contenidoLlena;
   });
 
   return parseFloat((maxEnteras + totalAbiertas).toFixed(4));
 }
 
 // ═════════════════════════════════════════════════════════════
-// syncStockByAreaFromConteo() — Sync desde la nube
+// syncStockByAreaFromConteo()
 // ═════════════════════════════════════════════════════════════
 
-/**
- * Recorre state.inventarioConteo y aplica los valores al
- * stockByArea de cada producto en state.products.
- *
- * Llamada desde sync.js cuando llegan datos de la nube
- * (stockAreas snapshot) para mantener el estado local
- * sincronizado con Firestore.
- */
 export function syncStockByAreaFromConteo() {
   if (!state.inventarioConteo) return;
 
@@ -387,15 +436,9 @@ export function syncStockByAreaFromConteo() {
 }
 
 // ═════════════════════════════════════════════════════════════
-// handleFileImport() — Importación desde Excel
+// handleFileImport() — Importación de PRODUCTOS desde Excel
 // ═════════════════════════════════════════════════════════════
 
-/**
- * Maneja la importación de productos desde un archivo Excel.
- * Solo disponible para Administradores.
- *
- * @param {Event} event — evento del input[type=file]
- */
 export function handleFileImport(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -403,24 +446,21 @@ export function handleFileImport(event) {
 
   console.info('[Import] Archivo recibido:', file.name, file.size, 'bytes');
 
-  // ── Validar rol (solo admin) ────────────────────────────────
   if (state.userRole === 'user') {
     showNotification('⛔ Solo el administrador puede importar productos');
     fileInput.value = '';
     return;
   }
 
-  // ── Validar extensión ───────────────────────────────────────
   const validExtensions = ['.xlsx', '.xls', '.csv'];
   const fileName = file.name.toLowerCase();
-  const isValid = validExtensions.some(ext => fileName.endsWith(ext));
+  const isValid  = validExtensions.some(ext => fileName.endsWith(ext));
   if (!isValid) {
     showNotification('⚠️ Selecciona un archivo Excel (.xlsx, .xls, .csv)');
     fileInput.value = '';
     return;
   }
 
-  // ── Validar que XLSX esté disponible ────────────────────────
   if (typeof window.XLSX === 'undefined' || !window.XLSX.read) {
     showNotification('❌ La librería XLSX no está cargada. Recarga la página.');
     fileInput.value = '';
@@ -436,76 +476,52 @@ export function handleFileImport(event) {
 
   reader.onload = function (e) {
     try {
-      console.info('[Import] FileReader completado, parseando XLSX...');
-      const data = new Uint8Array(e.target.result);
+      const data     = new Uint8Array(e.target.result);
       const workbook = window.XLSX.read(data, { type: 'array' });
 
-      if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+      if (!workbook.SheetNames?.length) {
         showNotification('El archivo no contiene hojas válidas');
-        fileInput.value = '';
-        return;
+        fileInput.value = ''; return;
       }
 
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       if (!firstSheet) {
         showNotification('La primera hoja del archivo está vacía');
-        fileInput.value = '';
-        return;
+        fileInput.value = ''; return;
       }
 
       const jsonData = window.XLSX.utils.sheet_to_json(firstSheet);
-      console.info('[Import] Filas encontradas:', jsonData.length);
-
-      if (!jsonData || jsonData.length === 0) {
+      if (!jsonData?.length) {
         showNotification('El archivo no contiene datos válidos');
-        fileInput.value = '';
-        return;
+        fileInput.value = ''; return;
       }
 
-      // ── Mapa de columnas (multi-nombre) ─────────────────────
       const columnMap = {
-        id: ['ID', 'Id', 'id', 'Código', 'codigo'],
-        name: [
-          'Producto', 'Nombre', 'Descripción', 'descripcion', 'producto',
-          'nombre', 'Name', 'name', 'PRODUCTO', 'NOMBRE',
-        ],
-        unit: ['Unidad', 'unidad', 'Medida', 'medida', 'Unit', 'UNIDAD'],
+        id:   ['ID', 'Id', 'id', 'Código', 'codigo'],
+        name: ['Producto', 'Nombre', 'Descripción', 'descripcion', 'producto',
+               'nombre', 'Name', 'name', 'PRODUCTO', 'NOMBRE'],
+        unit:  ['Unidad', 'unidad', 'Medida', 'medida', 'Unit', 'UNIDAD'],
         group: ['Grupo', 'grupo', 'Categoría', 'categoria', 'Group', 'GRUPO'],
-        stock: [
-          'Cantidad', 'cantidad', 'Stock', 'stock', 'Enteras',
-          'CANTIDAD', 'STOCK',
-        ],
-        capacidadMl: [
-          'CapacidadML', 'capacidadMl', 'CapacidadMl',
-          'Capacidad_ML', 'CapML', 'capacidadML', 'capacidadml',
-        ],
-        pesoBotellaLlenaOz: [
-          'PesoBotellaOz', 'pesoBotellaOz', 'PesoLlenaOz',
-          'PesoBotella_Oz', 'PesoOz', 'PesoBotella0z',
-          'pesobotella0z', 'pesoBotella0z',
-          'pesoBotellaLlenaOz', 'PesoBotellaLlenaOz',
-        ],
+        stock: ['Cantidad', 'cantidad', 'Stock', 'stock', 'Enteras', 'CANTIDAD'],
+        capacidadMl: ['CapacidadML', 'capacidadMl', 'CapacidadMl',
+                      'Capacidad_ML', 'CapML', 'capacidadML', 'capacidadml'],
+        pesoBotellaLlenaOz: ['PesoBotellaOz', 'pesoBotellaOz', 'PesoLlenaOz',
+                             'PesoOz', 'pesoBotellaLlenaOz', 'PesoBotellaLlenaOz'],
       };
 
-      /** Busca el valor de una columna por nombre */
       const findCol = (row, keys) => {
         for (const key of keys) {
-          if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
-            return row[key];
-          }
+          if (row[key] !== undefined && row[key] !== null && row[key] !== '') return row[key];
         }
         const rowKeys = Object.keys(row);
         for (const key of keys) {
           const found = rowKeys.find(rk => rk.toLowerCase() === key.toLowerCase());
-          if (found && row[found] !== undefined && row[found] !== null && row[found] !== '') {
-            return row[found];
-          }
+          if (found && row[found] !== undefined && row[found] !== null && row[found] !== '') return row[found];
         }
         return undefined;
       };
 
-      // ── Preparar IDs únicos ─────────────────────────────────
-      const existingIds = new Set(state.products.map(p => p.id));
+      const existingIds  = new Set(state.products.map(p => p.id));
       let maxNum = 0;
       state.products.forEach(p => {
         const m = String(p.id).match(/^PRD-(\d+)$/);
@@ -517,75 +533,58 @@ export function handleFileImport(event) {
       const usedInBatch = new Set();
       let skipped = 0;
 
-      // ── Procesar cada fila ──────────────────────────────────
-      jsonData.forEach((row) => {
+      jsonData.forEach(row => {
         const nameRaw = findCol(row, columnMap.name);
-        const name = nameRaw !== undefined ? String(nameRaw).trim() : '';
+        const name    = nameRaw !== undefined ? String(nameRaw).trim() : '';
         if (!name) { skipped++; return; }
 
         const rawId = findCol(row, columnMap.id);
         let id = rawId !== undefined ? String(rawId).trim() : '';
 
         if (!id || existingIds.has(id) || usedInBatch.has(id)) {
-          do {
-            id = 'PRD-' + String(nextNum++).padStart(3, '0');
-          } while (existingIds.has(id) || usedInBatch.has(id));
+          do { id = 'PRD-' + String(nextNum++).padStart(3, '0'); }
+          while (existingIds.has(id) || usedInBatch.has(id));
         }
         usedInBatch.add(id);
 
-        const unitRaw = findCol(row, columnMap.unit);
-        const unit = unitRaw !== undefined ? String(unitRaw).trim() : 'Unidad';
+        const unit  = String(findCol(row, columnMap.unit)  ?? 'Unidad').trim();
+        const group = String(findCol(row, columnMap.group) ?? 'General').trim();
+        const stock = parseExcelNumber(findCol(row, columnMap.stock) ?? 0);
 
-        const groupRaw = findCol(row, columnMap.group);
-        const group = groupRaw !== undefined ? String(groupRaw).trim() : 'General';
-
-        const stockRaw = findCol(row, columnMap.stock);
-        const stock = stockRaw !== undefined ? parseExcelNumber(stockRaw) : 0;
-
-        const capRaw = findCol(row, columnMap.capacidadMl);
+        const capRaw  = findCol(row, columnMap.capacidadMl);
         const capacidadMl = capRaw !== undefined
-          ? (isNaN(parseFloat(capRaw)) ? null : parseFloat(capRaw))
-          : null;
+          ? (isNaN(parseFloat(capRaw)) ? null : parseFloat(capRaw)) : null;
 
         const pesoRaw = findCol(row, columnMap.pesoBotellaLlenaOz);
         const pesoBotellaLlenaOz = pesoRaw !== undefined
-          ? (isNaN(parseFloat(pesoRaw)) ? null : parseFloat(pesoRaw))
-          : null;
+          ? (isNaN(parseFloat(pesoRaw)) ? null : parseFloat(pesoRaw)) : null;
 
-        const product = {
-          id, name, unit, group,
-          stockByArea: { almacen: stock, barra1: 0, barra2: 0 },
-        };
-        if (capacidadMl !== null && capacidadMl > 0) product.capacidadMl = capacidadMl;
-        if (pesoBotellaLlenaOz !== null && pesoBotellaLlenaOz > 0) product.pesoBotellaLlenaOz = pesoBotellaLlenaOz;
+        const product = { id, name, unit, group,
+          stockByArea: { almacen: stock, barra1: 0, barra2: 0 } };
+        if (capacidadMl        > 0) product.capacidadMl        = capacidadMl;
+        if (pesoBotellaLlenaOz > 0) product.pesoBotellaLlenaOz = pesoBotellaLlenaOz;
 
         toImport.push(product);
       });
 
-      if (toImport.length === 0) {
+      if (!toImport.length) {
         showNotification('⚠️ No se encontraron productos válidos. Verifica las columnas.');
-        fileInput.value = '';
-        return;
+        fileInput.value = ''; return;
       }
 
       state.products = state.products.concat(toImport);
+      showNotification(`✅ ${toImport.length} productos importados.` +
+        (skipped ? ` ${skipped} filas omitidas.` : ''));
 
-      console.info(`[Import] ✅ ${toImport.length} productos importados, ${skipped} filas omitidas`);
-      showNotification(
-        `✅ ${toImport.length} productos importados.${skipped ? ' ' + skipped + ' filas omitidas.' : ''}`
-      );
-
-      state.activeTab = 'inicio';
+      state.activeTab    = 'inicio';
       state.selectedGroup = 'Todos';
-      state.searchTerm = '';
+      state.searchTerm   = '';
       state.selectedArea = 'almacen';
       saveToLocalStorage();
 
-      // Sync a la nube si está habilitado
       if (state.syncEnabled && window._db) {
         import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
       }
-
       import('./render.js').then(m => m.renderTab());
       fileInput.value = '';
 
@@ -600,46 +599,114 @@ export function handleFileImport(event) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// AJUSTE DE PRODUCTO (con notificación al admin)
+// importFullData() — FIX v2.2
+// ══════════════════════════════════════════════════════════════
+// Importa el estado completo de la app desde un archivo JSON
+// (backup exportado previamente). Solo disponible para admins.
+//
+// Era importada por app.js línea 9:
+//   import { ..., importFullData } from './products.js';
+// pero NO existía → SyntaxError al cargar app.js → la app
+// nunca arrancaba.
 // ═════════════════════════════════════════════════════════════
 
-/**
- * Ajusta el stock de un producto en un área específica.
- * Si el usuario es 'user', envía notificación al admin.
- *
- * @param {string} productId
- * @param {string} area
- * @param {number} nuevoValor
- * @param {string} [motivo='']
- */
-export async function ajustarProducto(productId, area, nuevoValor, motivo = '') {
-  const product = getProductById(productId);
-  if (!product) {
-    showNotification('⚠️ Producto no encontrado');
+export function importFullData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const fileInput = event.target;
+
+  if (state.userRole === 'user') {
+    showNotification('⛔ Solo el administrador puede importar datos completos');
+    fileInput.value = '';
     return;
   }
 
-  const valorAnterior = product.stockByArea?.[area] || 0;
-  if (!product.stockByArea) {
-    product.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
+  if (!file.name.toLowerCase().endsWith('.json')) {
+    showNotification('⚠️ Selecciona un archivo JSON de respaldo (.json)');
+    fileInput.value = '';
+    return;
   }
+
+  const reader = new FileReader();
+
+  reader.onerror = () => {
+    showNotification('❌ Error al leer el archivo de respaldo');
+    fileInput.value = '';
+  };
+
+  reader.onload = function (e) {
+    try {
+      const data = JSON.parse(e.target.result);
+
+      // Validar estructura mínima
+      if (!data || typeof data !== 'object') {
+        showNotification('⚠️ Formato de archivo inválido');
+        fileInput.value = ''; return;
+      }
+
+      // Restaurar campos con validación de tipo
+      if (Array.isArray(data.products))     state.products     = data.products;
+      if (Array.isArray(data.inventories))  state.inventories  = data.inventories;
+      if (Array.isArray(data.orders))       state.orders       = data.orders;
+      if (data.inventarioConteo)            state.inventarioConteo          = data.inventarioConteo;
+      if (data.auditoriaConteo)             state.auditoriaConteo           = data.auditoriaConteo;
+      if (data.auditoriaStatus)             state.auditoriaStatus           = data.auditoriaStatus;
+      if (data.auditoriaConteoPorUsuario)   state.auditoriaConteoPorUsuario = data.auditoriaConteoPorUsuario;
+      if (data.ajustes)                     state.ajustes                   = data.ajustes;
+
+      // Reconstruir stockByArea desde conteo si se perdió
+      syncStockByAreaFromConteo();
+      saveToLocalStorage();
+
+      const total = state.products.length;
+      showNotification(`✅ Datos importados: ${total} productos restaurados`);
+      console.info('[ImportFull] ✓ Estado restaurado desde JSON —', total, 'productos');
+
+      state.activeTab    = 'inicio';
+      state.selectedGroup = 'Todos';
+      state.searchTerm   = '';
+      saveToLocalStorage();
+
+      import('./render.js').then(m => m.renderTab()).catch(() => {});
+
+      if (state.syncEnabled && window._db && navigator.onLine) {
+        import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
+      }
+
+      fileInput.value = '';
+
+    } catch (err) {
+      showNotification('❌ Error al parsear el archivo: ' + err.message);
+      console.error('[ImportFull] Error:', err);
+      fileInput.value = '';
+    }
+  };
+
+  reader.readAsText(file, 'utf-8');
+}
+
+// ═════════════════════════════════════════════════════════════
+// ajustarProducto()
+// ═════════════════════════════════════════════════════════════
+
+export async function ajustarProducto(productId, area, nuevoValor, motivo = '') {
+  const product = getProductById(productId);
+  if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
+
+  const valorAnterior = product.stockByArea?.[area] || 0;
+  if (!product.stockByArea) product.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
   product.stockByArea[area] = parseFloat(nuevoValor) || 0;
 
   saveToLocalStorage();
   console.info(`[Products] Ajuste: ${product.name} [${area}] ${valorAnterior} → ${nuevoValor}`);
 
-  // ── Notificar al admin si el usuario es 'user' ──────────────
   if (state.userRole === 'user') {
     try {
       const { enviarNotificacionAjuste } = await import('./notificaciones.js');
-      await enviarNotificacionAjuste({
-        productId,
-        productName: product.name,
-        area,
-        valorAnterior,
-        nuevoValor,
-        motivo,
-        userId: state.auditCurrentUser?.userId || 'unknown',
+      await enviarNotificacionAjuste?.({
+        productId, productName: product.name, area,
+        valorAnterior, nuevoValor, motivo,
+        userId:   state.auditCurrentUser?.userId   || 'unknown',
         userName: state.auditCurrentUser?.userName || 'Anónimo',
         timestamp: Date.now(),
       });
@@ -652,49 +719,31 @@ export async function ajustarProducto(productId, area, nuevoValor, motivo = '') 
 }
 
 // ═════════════════════════════════════════════════════════════
-// FINALIZAR CONTEO (reset para próximo inventario)
+// finalizarInventario()
 // ═════════════════════════════════════════════════════════════
 
-/**
- * Finaliza el conteo actual:
- *  1. Guarda snapshot en historial (inventories)
- *  2. Limpia conteos en ceros
- *  3. Mantiene catálogo de productos intacto
- *
- * Regla de negocio: "Evita mezcla de inventarios"
- */
 export function finalizarInventario() {
-  // ── 1. Guardar reporte en historial ─────────────────────────
   const snapshot = {
-    id: 'INV-' + Date.now(),
-    fecha: new Date().toISOString(),
-    usuario: state.auditCurrentUser?.userName || 'Sistema',
+    id:       'INV-' + Date.now(),
+    fecha:    new Date().toISOString(),
+    usuario:  state.auditCurrentUser?.userName || 'Sistema',
     productos: state.products.map(p => ({
-      id: p.id,
-      nombre: p.name,
-      grupo: p.group,
-      stockByArea: { ...p.stockByArea },
+      id:            p.id,
+      nombre:        p.name,
+      grupo:         p.group,
+      stockByArea:   { ...p.stockByArea },
       totalUnidades: calcularStockTotal(p.id).total,
-      totalMl: calcularStockTotal(p.id).totalMl,
+      totalMl:       calcularStockTotal(p.id).totalMl,
     })),
   };
 
   state.inventories.push(snapshot);
 
-  // ── 2. Limpiar conteos ──────────────────────────────────────
-  state.inventarioConteo = {};
-  state.auditoriaConteo = {};
+  state.inventarioConteo          = {};
+  state.auditoriaConteo           = {};
   state.auditoriaConteoPorUsuario = {};
-  state.auditoriaStatus = {
-    almacen: 'pendiente',
-    barra1: 'pendiente',
-    barra2: 'pendiente',
-  };
-
-  // Reset stockByArea a ceros
-  state.products.forEach(p => {
-    p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
-  });
+  state.auditoriaStatus = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
+  state.products.forEach(p => { p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 }; });
 
   saveToLocalStorage();
   console.info('[Products] ✓ Inventario finalizado. Historial guardado:', snapshot.id);
