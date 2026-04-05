@@ -47,34 +47,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // 🔸 Usuarios
-    match /users/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.token.admin == true;
-    }
-
-    // 🔸 Proveedores
-    match /proveedores/{proveedorId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.token.role == 'manager';
-    }
-
-    // 🔸 Pedidos
-    match /pedidos/{pedidoId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && (
-        request.auth.token.role == 'manager' || request.auth.token.role == 'supplier'
-      );
-    }
-
-    // 🔸 Productos (para importación/exportación Excel)
-    match /productos/{productoId} {
-      allow read, list: if request.auth != null; // Permite exportar productos
-      allow write: if request.auth != null && request.auth.token.role == 'manager'; // Solo managers pueden importar
-    }
-  }
-}
-
     // ══════════════════════════════════════════════════════════
     // FUNCIONES HELPER
     // ══════════════════════════════════════════════════════════
