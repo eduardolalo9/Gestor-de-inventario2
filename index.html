@@ -84,7 +84,7 @@
 
     <!-- APP WRAPPER: Solo visible tras autenticación exitosa -->
     <div id="appWrapper">
-        <input type="file" id="input-excel" accept=".xlsx,.xls,.csv">
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden">
         <input type="file" id="importDataInput" accept=".json" class="hidden">
 
         <!-- Overlay del Sidebar -->
@@ -348,6 +348,6 @@ Importar datos (JSON)
         El atributo type="module" activa: defer automático, scope léxico, strict mode.
     -->
     <script type="module" src="js/app.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
 </body>
 </html>

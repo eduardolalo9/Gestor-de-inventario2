@@ -469,7 +469,12 @@ export function handleFileImport(event) {
 
   console.info('[Import] Archivo recibido:', file.name, file.size, 'bytes');
 
- 
+  if (state.userRole === 'user') {
+    showNotification('⛔ Solo el administrador puede importar productos');
+    fileInput.value = '';
+    return;
+  }
+
   const validExtensions = ['.xlsx', '.xls', '.csv'];
   const fileName = file.name.toLowerCase();
   const isValid  = validExtensions.some(ext => fileName.endsWith(ext));
