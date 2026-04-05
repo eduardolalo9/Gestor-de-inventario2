@@ -583,6 +583,211 @@ function exportarAuditoriaExcel() {
 }
 
 // ═════════════════════════════════════════════════════════════
+//  PEDIDO / CARRITO — Modal para confirmar y enviar por WhatsApp
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * openOrderModal() — abre el modal de confirmación de pedido.
+ * Muestra los productos del carrito, permite ajustar cantidades,
+ * añadir proveedor + nota y genera el pedido por WhatsApp.
+ *
+ * Llamado desde ui.js → updateHeaderActions() → botón 🛒 del header.
+ */
+function openOrderModal() {
+    if (state.cart.length === 0) {
+        showNotification('🛒 El carrito está vacío');
+        return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.id = '_orderModalOverlay';
+    overlay.style.cssText =
+        'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;' +
+        'display:flex;align-items:flex-end;justify-content:center;' +
+        'animation:fadeIn 0.15s ease both;';
+
+    const itemsHtml = state.cart.map((item, idx) => `
+      <div style="display:flex;align-items:center;gap:8px;
+                  padding:8px 0;border-bottom:1px solid var(--border);">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.82rem;font-weight:600;color:var(--txt-primary);
+                      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            ${escapeHtml(item.name)}
+          </div>
+          <div style="font-size:0.68rem;color:var(--txt-muted);">${escapeHtml(item.unit || '')}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          <button onclick="window._cartDecrement(${idx})"
+            style="width:26px;height:26px;border-radius:50%;border:1px solid var(--border-mid);
+                   background:var(--surface);color:var(--txt-primary);font-size:1rem;
+                   cursor:pointer;display:flex;align-items:center;justify-content:center;">−</button>
+          <span style="font-weight:700;font-size:0.9rem;color:var(--txt-primary);
+                       min-width:24px;text-align:center;">${item.quantity}</span>
+          <button onclick="window._cartIncrement(${idx})"
+            style="width:26px;height:26px;border-radius:50%;border:1px solid var(--border-mid);
+                   background:var(--surface);color:var(--txt-primary);font-size:1rem;
+                   cursor:pointer;display:flex;align-items:center;justify-content:center;">+</button>
+          <button onclick="window._cartRemove(${idx})"
+            style="width:26px;height:26px;border-radius:50%;border:none;
+                   background:var(--red-dim,#fee2e2);color:var(--red-text,#dc2626);
+                   font-size:0.7rem;cursor:pointer;">✕</button>
+        </div>
+      </div>`).join('');
+
+    overlay.innerHTML = `
+      <div style="background:var(--card);border-radius:var(--r-lg) var(--r-lg) 0 0;
+                  padding:20px 20px 28px;width:100%;max-width:480px;
+                  max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-modal);">
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <p style="font-weight:700;font-size:1rem;color:var(--txt-primary);margin:0;">
+            🛒 Confirmar pedido
+          </p>
+          <button id="_om_close"
+            style="background:none;border:none;font-size:1.3rem;cursor:pointer;
+                   color:var(--txt-muted);line-height:1;">×</button>
+        </div>
+
+        <div id="_om_items">${itemsHtml}</div>
+
+        <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px;">
+          <div>
+            <label style="display:block;font-size:0.7rem;font-weight:700;
+                          text-transform:uppercase;color:var(--txt-secondary);margin-bottom:4px;">
+              Proveedor
+            </label>
+            <input id="_om_supplier" type="text" placeholder="Nombre del proveedor"
+              style="width:100%;box-sizing:border-box;padding:8px 10px;
+                     background:var(--surface);border:1px solid var(--border-mid);
+                     border-radius:var(--r-md);color:var(--txt-primary);font-size:0.85rem;">
+          </div>
+          <div>
+            <label style="display:block;font-size:0.7rem;font-weight:700;
+                          text-transform:uppercase;color:var(--txt-secondary);margin-bottom:4px;">
+              Nota (opcional)
+            </label>
+            <textarea id="_om_note" rows="2" placeholder="Instrucciones adicionales…"
+              style="width:100%;box-sizing:border-box;padding:8px 10px;resize:vertical;
+                     background:var(--surface);border:1px solid var(--border-mid);
+                     border-radius:var(--r-md);color:var(--txt-primary);font-size:0.85rem;"></textarea>
+          </div>
+        </div>
+
+        <button id="_om_send"
+          style="width:100%;margin-top:16px;padding:12px;
+                 background:linear-gradient(135deg,#25d366,#128c7e);
+                 border:none;border-radius:var(--r-lg);color:#fff;
+                 font-size:0.9rem;font-weight:700;cursor:pointer;">
+          📲 Enviar por WhatsApp
+        </button>
+
+      </div>`;
+
+    document.body.appendChild(overlay);
+
+    // Helpers de carrito expuestos temporalmente en window (eliminados al cerrar)
+    const refreshItems = () => {
+        const container = overlay.querySelector('#_om_items');
+        if (!container) return;
+        if (state.cart.length === 0) { close(); return; }
+        container.innerHTML = state.cart.map((item, idx) => `
+          <div style="display:flex;align-items:center;gap:8px;
+                      padding:8px 0;border-bottom:1px solid var(--border);">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:0.82rem;font-weight:600;color:var(--txt-primary);">
+                ${escapeHtml(item.name)}
+              </div>
+              <div style="font-size:0.68rem;color:var(--txt-muted);">${escapeHtml(item.unit || '')}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+              <button onclick="window._cartDecrement(${idx})"
+                style="width:26px;height:26px;border-radius:50%;border:1px solid var(--border-mid);
+                       background:var(--surface);color:var(--txt-primary);font-size:1rem;cursor:pointer;">−</button>
+              <span style="font-weight:700;font-size:0.9rem;color:var(--txt-primary);
+                           min-width:24px;text-align:center;">${item.quantity}</span>
+              <button onclick="window._cartIncrement(${idx})"
+                style="width:26px;height:26px;border-radius:50%;border:1px solid var(--border-mid);
+                       background:var(--surface);color:var(--txt-primary);font-size:1rem;cursor:pointer;">+</button>
+              <button onclick="window._cartRemove(${idx})"
+                style="width:26px;height:26px;border-radius:50%;border:none;
+                       background:#fee2e2;color:#dc2626;font-size:0.7rem;cursor:pointer;">✕</button>
+            </div>
+          </div>`).join('');
+    };
+
+    window._cartIncrement = (idx) => {
+        if (state.cart[idx]) { state.cart[idx].quantity += 1; refreshItems(); }
+    };
+    window._cartDecrement = (idx) => {
+        if (state.cart[idx]) {
+            state.cart[idx].quantity -= 1;
+            if (state.cart[idx].quantity <= 0) state.cart.splice(idx, 1);
+            refreshItems();
+        }
+    };
+    window._cartRemove = (idx) => {
+        state.cart.splice(idx, 1);
+        refreshItems();
+    };
+
+    const close = () => {
+        overlay.remove();
+        delete window._cartIncrement;
+        delete window._cartDecrement;
+        delete window._cartRemove;
+        saveToLocalStorage();
+        _render();
+    };
+
+    overlay.querySelector('#_om_close').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    overlay.querySelector('#_om_send').addEventListener('click', () => {
+        if (state.cart.length === 0) { showNotification('🛒 El carrito está vacío'); return; }
+
+        const supplier = (overlay.querySelector('#_om_supplier').value || '').trim() || 'Proveedor';
+        const note     = (overlay.querySelector('#_om_note').value || '').trim();
+        const now      = new Date();
+        const fecha    = now.toLocaleDateString('es-MX');
+        const orderId  = 'PED-' + Date.now();
+
+        // Guardar pedido en historial
+        const order = {
+            id:       orderId,
+            supplier,
+            date:     fecha,
+            note,
+            total:    state.cart.reduce((s, i) => s + i.quantity, 0),
+            products: state.cart.map(i => ({ ...i })),
+        };
+        state.orders.unshift(order);
+        if (state.orders.length > 100) state.orders.pop();
+
+        // Formatear mensaje WhatsApp
+        const lines = [
+            `📦 *Pedido ${orderId}*`,
+            `Proveedor: *${supplier}*`,
+            `Fecha: ${fecha}`,
+            '',
+            '*Productos:*',
+            ...state.cart.map(i => `• ${i.name} (${i.unit || 'Unid'}): *${i.quantity}*`),
+            '',
+            note ? `📝 Nota: ${note}` : '',
+            `Total items: *${order.total}*`,
+        ].filter(l => l !== undefined).join('\n');
+
+        // Limpiar carrito y cerrar
+        state.cart = [];
+        saveToLocalStorage();
+        close();
+
+        const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
+        window.open(url, '_blank');
+        showNotification(`✅ Pedido ${orderId} enviado`);
+    });
+}
+
+// ═════════════════════════════════════════════════════════════
 //  BINDINGS GLOBALES — exponer TODO en window
 // ═════════════════════════════════════════════════════════════
 
@@ -591,6 +796,7 @@ window.editProduct            = editProduct;
 window.deleteProduct          = deleteProduct;
 window.deleteAllProducts      = deleteAllProducts;
 window.addToCart              = addToCart;
+window.openOrderModal         = openOrderModal;
 window.shareOrderWhatsApp     = shareOrderWhatsApp;
 window.deleteOrder            = deleteOrder;
 window.switchArea             = switchArea;
@@ -602,4 +808,4 @@ window.openInventarioModal    = openInventarioModal;
 window.exportToExcel          = exportToExcel;
 window.exportarAuditoriaExcel = exportarAuditoriaExcel;
 
-console.info('[Actions] ✓ 15 funciones expuestas en window.');
+console.info('[Actions] ✓ 16 funciones expuestas en window.');
