@@ -1,25 +1,15 @@
-// Importación de productos desde Excel a Firestore
-import * as XLSX from 'xlsx';
-
-document.getElementById('importExcel').addEventListener('change', async (event) => {
-  const file = event.target.files[0];
-  const data = await file.arrayBuffer();
-  const workbook = XLSX.read(data);
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const productos = XLSX.utils.sheet_to_json(sheet);
-
-  const batch = db.batch();
-  productos.forEach((producto) => {
-    const ref = db.collection('productos').doc();
-    batch.set(ref, {
-      nombre: producto.Nombre,
-      precio: producto.Precio,
-      stock: producto.Stock,
-      proveedor: producto.Proveedor,
-      fechaActualizacion: firebase.firestore.FieldValue.serverTimestamp()
-    });
-  });
-
-  await batch.commit();
-  alert('Importación completada correctamente.');
-});
+/**
+ * js/excel-import.js — CORREGIDO
+ *
+ * NOTA: Este archivo existía en el repositorio pero:
+ *   1. Nunca se importaba desde ningún otro módulo.
+ *   2. Usaba `import * as XLSX from 'xlsx'` (bare specifier sin importmap) → roto.
+ *   3. Usaba variables `db` y `firebase` que no existen en este proyecto.
+ *
+ * La importación de Excel YA está correctamente implementada en:
+ *   → js/products.js → handleFileImport(event)
+ *   → js/app.js      → delegación del evento 'change' en #fileInput
+ *
+ * Este archivo se deja vacío para evitar confusión.
+ * NO importar este módulo desde ningún lado.
+ */
