@@ -273,6 +273,29 @@ export function deleteProduct(id) {
 }
 
 // ═════════════════════════════════════════════════════════════
+// tieneConversion() — FIX: faltaba export, reportes.js la importa
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * tieneConversion(product) — FIX v2.3
+ * ──────────────────────────────────────────────────────────────
+ * Indica si un producto tiene datos suficientes para convertir
+ * unidades a mililitros (requiere capacidadMl definida y > 0).
+ *
+ * reportes.js la usa como:
+ *   const totalMl = tieneConversion(p) ? Math.round(totalGeneral * p.capacidadMl) : null;
+ *
+ * Era importada desde './products.js' pero NO existía →
+ * "does not provide an export named 'tieneConversion'" → crash.
+ *
+ * @param {object} product — objeto producto de state.products
+ * @returns {boolean}
+ */
+export function tieneConversion(product) {
+  return !!(product && product.capacidadMl && product.capacidadMl > 0);
+}
+
+// ═════════════════════════════════════════════════════════════
 // CÁLCULOS DE STOCK
 // ═════════════════════════════════════════════════════════════
 
