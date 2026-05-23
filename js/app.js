@@ -40,30 +40,10 @@
  *   única vez por pestaña, sin importar cuántos re-logins ocurran.
  */
 
-import { initTheme }                  from './ui.js';
-import { loadFromLocalStorage,
-         smartAutoSave,
-         saveToLocalStorage }          from './storage.js';
-import { syncStockByAreaFromConteo,
-         handleFileImport,
-         importFullData }              from './products.js';
-import { initAuditUser }              from './audit.js';
-import { initAuth,
-         onAuthReady,
-         getAuthReady,
-         onAuthChange }               from './auth.js';
-import { switchTab }                  from './render.js';
-import { updateNetworkStatus,
-         syncToCloud,
-         stopRealtimeListeners }       from './sync.js';
-import { state }                      from './state.js';
-import { INITIAL_PRODUCTS,
-         AUTO_SAVE_INTERVAL_MS,
-         SYNC_RECOVERY_INTERVAL_MS }   from './constants.js';
-import './notificaciones.js';
-import './ajustes.js';
-import './reportes.js';
-import './actions.js';
+// ==================== CARGA DE MÓDULOS COMO GLOBALES ====================
+window.addEventListener('load', () => {
+    // Los demás archivos ya se cargarán como scripts normales
+});
 
 console.info('[App] BarInventory arrancando…');
 
@@ -115,7 +95,12 @@ window.addEventListener('beforeunload', () => {
 // ═══════════════════════════════════════════════════════════════
 // DOMContentLoaded
 // ═══════════════════════════════════════════════════════════════
-window.addEventListener('DOMContentLoaded', () => {
+// Esperar a que todos los scripts se carguen
+window.addEventListener('load', () => {
+    console.info('[App] Todos los scripts cargados — iniciando...');
+
+    if (typeof initTheme === 'function') initTheme();
+    if (typeof initAuth === 'function') initAuth();
   console.info('[App] DOM listo — iniciando secuencia…');
 
   initTheme();
