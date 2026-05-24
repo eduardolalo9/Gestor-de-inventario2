@@ -1,242 +1,164 @@
 /**
- * js/app.js — v2.4
- *
- * FIX BUG-5 (v2.1): Service Worker con ruta relativa './sw.js' y scope './'
- *   en lugar de '/sw.js' absoluta — necesario para GitHub Pages /index/.
- *
- * FIX BUG-A (v2.2) — CRÍTICO: Bug de sintaxis en el bloque del SW.
- * ──────────────────────────────────────────────────────────────────
- * PROBLEMA:
- *   El listener 'beforeunload' fue insertado accidentalmente DENTRO de
- *   la cadena Promise del registro del SW, partiéndola en dos bloques
- *   sin conexión. La llamada navigator.serviceWorker.register() estaba
- *   ausente — solo existía un .then() huérfano que el parser rechazaba
- *   silenciosamente. El SW nunca se registraba.
- *   Consecuencia: sin Service Worker, sin modo offline real, sin
- *   instalación PWA. En una barra con WiFi inestable la app quedaba
- *   inoperable al caer la conexión.
- *
- * CORRECCIÓN:
- *   ① Se agrega la llamada faltante:
- *      navigator.serviceWorker.register('./sw.js', { scope: './' })
- *   ② Se elimina el beforeunload mal ubicado dentro del bloque del SW.
- *      El beforeunload correcto ya existe más abajo, fuera del bloque.
- *
- * FIX BUG-C (v2.2) — CRÍTICO: setInterval de recovery duplicado.
- * ──────────────────────────────────────────────────────────────────
- * PROBLEMA:
- *   _waitForUser() tenía un setInterval de sync-recovery SUELTO,
- *   fuera del guard if (!_appInitialized). Esto significaba que cada
- *   vez que el usuario hacía logout + re-login se creaba un nuevo
- *   interval acumulativo: 2 sesiones → 2 intervals, 3 sesiones → 3,
- *   etc. Efectos: sincronizaciones dobles/triples y memory leak.
- *   Además ese interval llamaba a syncToCloud() sin .catch(), por lo
- *   que cualquier error de red quedaba sin manejar y podía romper la
- *   Promise chain silenciosamente.
- *
- * CORRECCIÓN:
- *   Se elimina el setInterval suelto. Solo queda el correcto, dentro
- *   del guard if (!_appInitialized), que garantiza que se crea una
- *   única vez por pestaña, sin importar cuántos re-logins ocurran.
+ * js/app.js — Versión Corregida y Estable (v2.5)
+ * 
+ * Compatible con carga como <script src="js/app.js"> (NO módulo)
+ * Todos los demás archivos JS se cargan como scripts globales en index.html
  */
-
-// ==================== CARGA DE MÓDULOS COMO GLOBALES ====================
-window.addEventListener('load', () => {
-    // Los demás archivos ya se cargarán como scripts normales
-});
 
 console.info('[App] BarInventory arrancando…');
 
-// ── Service Worker ────────────────────────────────────────────
+// ── Service Worker Registration ─────────────────────────────────────
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    // FIX BUG-5: Ruta relativa './sw.js' — funciona en /index/ de GitHub Pages.
-    // FIX BUG-A: Se agrega register() que faltaba y se elimina el beforeunload
-    //            que estaba mal ubicado aquí (el correcto ya existe más abajo).
-    navigator.serviceWorker.register('./sw.js', { scope: './' })
-      .then(reg => {
-        console.info('[SW] Registrado — scope:', reg.scope);
-        reg.addEventListener('updatefound', () => {
-          const nw = reg.installing;
-          nw.addEventListener('statechange', () => {
-            if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-              console.info('[SW] Nueva versión disponible.');
-              window.showNotification?.('🔄 Nueva versión disponible — recarga la página');
-            }
-          });
-        });
-      })
-      .catch(err => console.warn('[SW] Error al registrar:', err));
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js', { scope: './' })
+            .then(reg => {
+                console.info('[SW] Registrado — scope:', reg.scope);
+                reg.addEventListener('updatefound', () => {
+                    const nw = reg.installing;
+                    if (nw) {
+                        nw.addEventListener('statechange', () => {
+                            if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                                console.info('[SW] Nueva versión disponible.');
+                                window.showNotification?.('🔄 Nueva versión disponible — recarga la página');
+                            }
+                        });
+                    }
+                });
+            })
+            .catch(err => console.warn('[SW] Error al registrar:', err));
 
-    navigator.serviceWorker.addEventListener('message', event => {
-      if (event.data?.type === 'SYNC_PENDING' && window._db && navigator.onLine) {
-        syncToCloud().catch(e => console.warn('[SW→App] syncToCloud falló:', e));
-      }
+        // Escuchar mensajes del Service Worker
+        navigator.serviceWorker.addEventListener('message', event => {
+            if (event.data?.type === 'SYNC_PENDING' && window._db && navigator.onLine) {
+                syncToCloud?.().catch(e => console.warn('[SW→App] sync falló:', e));
+            }
+        });
     });
-  });
 } else {
-  console.info('[SW] Service Workers no soportados.');
+    console.info('[SW] Service Workers no soportados en este navegador.');
 }
 
-// ── ESC cierra sidebar (sin interferir con modales abiertos) ──
+// ── Cerrar sidebar con tecla ESC ───────────────────────────────────
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape') return;
-  const anyOpen = ['productModal', 'orderModal', 'inventarioModal']
-    .some(id => !document.getElementById(id)?.classList.contains('hidden'));
-  if (!anyOpen) window.sbClose?.();
+    if (e.key === 'Escape') {
+        const anyModalOpen = ['productModal', 'orderModal', 'inventarioModal', 'ajustesModal']
+            .some(id => !document.getElementById(id)?.classList.contains('hidden'));
+        if (!anyModalOpen && typeof window.sbClose === 'function') {
+            window.sbClose();
+        }
+    }
 });
 
-// ── Guardar al cerrar pestaña ─────────────────────────────────
+// ── Guardar datos antes de cerrar pestaña ───────────────────────────
 window.addEventListener('beforeunload', () => {
-  stopRealtimeListeners();
-  try { saveToLocalStorage(); } catch (_) {}
+    stopRealtimeListeners?.();
+    try {
+        saveToLocalStorage?.();
+    } catch (e) {
+        console.warn('[App] Error guardando al cerrar:', e);
+    }
 });
 
-// ═══════════════════════════════════════════════════════════════
-// DOMContentLoaded
-// ═══════════════════════════════════════════════════════════════
-// Esperar a que todos los scripts se carguen
+// ═══════════════════════════════════════════════════════════════════════
+// DOM Loaded - Inicialización Principal
+// ═══════════════════════════════════════════════════════════════════════
 window.addEventListener('load', () => {
-    console.info('[App] Todos los scripts cargados — iniciando...');
+    console.info('[App] Todos los scripts cargados — iniciando aplicación...');
 
+    // Inicializar componentes básicos
     if (typeof initTheme === 'function') initTheme();
     if (typeof initAuth === 'function') initAuth();
-  console.info('[App] DOM listo — iniciando secuencia…');
 
-  initTheme();
+    // Enter en campos de login
+    const loginEmail = document.getElementById('loginEmail');
+    const loginPassword = document.getElementById('loginPassword');
 
-  // Enter en campos del login
-  document.getElementById('loginEmail')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('loginPassword')?.focus(); }
-  });
-  document.getElementById('loginPassword')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); window.handleLogin?.(); }
-  });
-
-  // Iniciar autenticación
-  initAuth();
-
-  // ── Manejador de sesión re-entrante ─────────────────────────
-  // FIX BUG-3 (v2.1): onAuthReady es una Promise que solo se resuelve UNA VEZ.
-  // Después de logout + re-login, auth.js crea una nueva Promise (P2),
-  // pero el .then() registrado aquí está en P1 y no vuelve a disparar.
-  // SOLUCIÓN: usamos getAuthReady() en cada ciclo para siempre obtener
-  // la Promise actual, y encadenamos un nuevo .then() en cada login.
-
-  let _appInitialized = false; // Solo inicializar listeners globales una vez
-
-  function _waitForUser() {
-    getAuthReady().then(user => {
-      if (!user) {
-        console.info('[App] Sin usuario — esperando login.');
-        // onAuthChange() disparará _waitForUser() cuando el usuario haga login.
-        return;
-      }
-
-      console.info('[App] Usuario confirmado — cargando aplicación…');
-
-      initAuditUser();
-      loadFromLocalStorage();
-      syncStockByAreaFromConteo();
-
-      // FIX BUG-C: El setInterval de recovery que existía aquí fue eliminado.
-      // Era un interval suelto fuera del guard _appInitialized que se duplicaba
-      // en cada re-login (logout + login acumulaba múltiples intervals).
-      // El único interval correcto está dentro del guard if (!_appInitialized).
-
-      switchTab(state.activeTab);
-
-      // Fase-4: Leer parámetro ?tab= de la URL para soportar shortcuts del PWA.
-      // Si el usuario abre la app desde un shortcut (ej. "Inventario" en el ícono),
-      // el manifest.json pasa ?tab=inventario y aquí lo aplicamos.
-      // Solo se aplica en el primer arranque (cuando _appInitialized es false).
-      if (!_appInitialized) {
-        const urlTab = new URLSearchParams(window.location.search).get('tab');
-        // FIX BUG-C3: VALID_TABS alineado con los case en render.js switch.
-        // ANTES: incluía 'auditoria' y 'reportes' que NO tienen case en render.js
-        // → el default los capturaba y sobreescribía activeTab a 'inicio'.
-        // ANTES: excluía 'historia' que SÍ tiene case en render.js.
-        // AHORA: lista exacta de los 7 case presentes en renderTab().
-        const VALID_TABS = ['inicio', 'inventario', 'productos', 'pedidos',
-                            'historia', 'ajustes', 'notificaciones'];
-        if (urlTab && VALID_TABS.includes(urlTab)) {
-          console.info(`[App] Shortcut PWA → tab: ${urlTab}`);
-          switchTab(urlTab);
-          // Limpiar el parámetro de la URL sin recargar la página
-          const cleanUrl = window.location.pathname;
-          window.history.replaceState({}, '', cleanUrl);
-        }
-      }
-
-      // Inicializar listeners globales solo una vez por sesión del navegador
-      if (!_appInitialized) {
-        _appInitialized = true;
-
-        // Delegación de eventos para inputs de archivo
-        document.body.addEventListener('change', function(e) {
-          const target = e.target;
-          if (!target || target.tagName !== 'INPUT') return;
-          if (target.id === 'fileInput')       { handleFileImport(e); return; }
-          if (target.id === 'importDataInput') { importFullData(e);   return; }
+    if (loginEmail) {
+        loginEmail.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                loginPassword?.focus();
+            }
         });
-
-        // Red online/offline
-        window.addEventListener('online',  updateNetworkStatus);
-        window.addEventListener('offline', updateNetworkStatus);
-
-        window.addEventListener('online', () => {
-          if (state.adjustmentsPending?.length > 0) {
-            import('./ajustes.js').then(m => m.subirAjustesPendientes()).catch(() => {});
-          }
+    }
+    if (loginPassword) {
+        loginPassword.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                window.handleLogin?.();
+            }
         });
+    }
 
-        // Auto-guardado cada 30s
-        setInterval(smartAutoSave, AUTO_SAVE_INTERVAL_MS);
+    // Variables de control
+    let _appInitialized = false;
 
-        // Sync de recuperación cada 3 min — ÚNICO interval, creado una sola vez
-        setInterval(() => {
-          if (navigator.onLine && window._db && state.userRole !== null &&
-              state._cloudSyncPending && !state._syncInProgress) {
-            console.info('[App] Sync de recuperación…');
-            syncToCloud().catch(e => console.warn('[App] Sync periódico falló:', e));
-          }
-        }, SYNC_RECOVERY_INTERVAL_MS);
+    function _waitForUser() {
+        getAuthReady?.().then(user => {
+            if (!user) {
+                console.info('[App] Esperando login...');
+                return;
+            }
 
-        // Guard anti doble-click exportToExcel
-        let _exportingExcel = false;
-        const origExport = window.exportToExcel;
-        if (origExport) {
-          window.exportToExcel = function(modo) {
-            if (_exportingExcel) { window.showNotification?.('⏳ Exportación en proceso…'); return; }
-            _exportingExcel = true;
-            try { origExport(modo); }
-            catch (e) { window.showNotification?.('❌ Error al exportar Excel'); console.error(e); }
-            setTimeout(() => { _exportingExcel = false; }, 3000);
-          };
-        }
+            console.info('[App] Usuario autenticado — cargando datos...');
 
-        // Label de tema en sidebar
-        const sbLabel = document.getElementById('sbThemeLabel');
-        if (sbLabel) {
-          sbLabel.textContent =
-            document.documentElement.getAttribute('data-theme') === 'dark'
-              ? 'Modo claro' : 'Modo oscuro';
-        }
-      }
+            initAuditUser?.();
+            loadFromLocalStorage?.();
+            syncStockByAreaFromConteo?.();
 
-      updateNetworkStatus();
-      console.info('[App] ✓ Arranque completo.');
-    }).catch(err => {
-      console.error('[App] Error en getAuthReady():', err);
-    });
-  }
+            switchTab(state.activeTab || 'inicio');
 
-  // Fase-3: Registrar _waitForUser como listener de cambios de auth.
-  // Se registra UNA SOLA VEZ. Cada vez que auth.js crea una nueva Promise
-  // (logout o cambio de usuario), onAuthChange dispara _waitForUser()
-  // directamente — sin polling de setInterval ni acumulación de timers.
-  onAuthChange(_waitForUser);
+            // Manejo de parámetro ?tab= para shortcuts PWA
+            if (!_appInitialized) {
+                const urlTab = new URLSearchParams(window.location.search).get('tab');
+                const VALID_TABS = ['inicio', 'inventario', 'productos', 'pedidos', 'historia', 'ajustes', 'notificaciones'];
 
-  // Arranque inicial
-  _waitForUser();
+                if (urlTab && VALID_TABS.includes(urlTab)) {
+                    switchTab(urlTab);
+                    window.history.replaceState({}, '', window.location.pathname);
+                }
+            }
+
+            // Inicializar listeners globales SOLO UNA VEZ
+            if (!_appInitialized) {
+                _appInitialized = true;
+
+                // Eventos de archivos
+                document.body.addEventListener('change', function(e) {
+                    if (e.target?.id === 'fileInput') handleFileImport?.(e);
+                    if (e.target?.id === 'importDataInput') importFullData?.(e);
+                });
+
+                // Estado de red
+                window.addEventListener('online', updateNetworkStatus);
+                window.addEventListener('offline', updateNetworkStatus);
+
+                // Auto-save
+                setInterval(() => {
+                    if (typeof smartAutoSave === 'function') smartAutoSave();
+                }, AUTO_SAVE_INTERVAL_MS || 30000);
+
+                // Sync de recuperación
+                setInterval(() => {
+                    if (navigator.onLine && window._db && state.userRole !== null && state._cloudSyncPending) {
+                        syncToCloud?.().catch(e => console.warn('[Recovery] Sync falló:', e));
+                    }
+                }, SYNC_RECOVERY_INTERVAL_MS || 180000);
+
+                updateNetworkStatus();
+            }
+
+            console.info('[App] ✓ Aplicación iniciada correctamente.');
+        }).catch(err => {
+            console.error('[App] Error en autenticación:', err);
+        });
+    }
+
+    // Registrar listener de cambios de autenticación
+    if (typeof onAuthChange === 'function') {
+        onAuthChange(_waitForUser);
+    }
+
+    // Primer intento
+    _waitForUser();
 });
