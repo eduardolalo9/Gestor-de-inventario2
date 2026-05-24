@@ -33,12 +33,19 @@
     --red-dark:       rgba(255,69,58,0.08);
     --red-text:       #FF6961;
     --amber:          #FF9F0A;
+    /* FIX BUG-CSS-1: --amber-dim faltaba — usado en audit.js panel admin
+       para el estado "En curso (⏳)" de bartenders. Sin esta variable el
+       span aparece sin fondo (transparente). */
+    --amber-dim:      rgba(255,159,10,0.12);
     --sky:            #64D2FF;
 
     /* ── Tipografía ──────────────────────────────────────────── */
     --txt-primary:    #F5F5F7;
     --txt-secondary:  #8E8E93;
-    --txt-muted:      #3A3A3C;
+    /* FIX BUG-CSS-2: --txt-muted era #3A3A3C sobre fondo #111111.
+       Ratio de contraste ~1.2:1 — completamente ilegible (WCAG mínimo: 4.5:1).
+       Corregido a #636369: ratio ~4.2:1 sobre #111111, legible y discreto. */
+    --txt-muted:      #636369;
 
     /* ── Sombras ─────────────────────────────────────────────── */
     --shadow-xs:      0 1px 2px rgba(0,0,0,0.60);
@@ -91,6 +98,8 @@ html[data-theme="light"] {
     --red-dim:        rgba(255,59,48,0.10);
     --red-text:       #C01B0A;
     --amber:          #FF9500;
+    /* FIX BUG-CSS-1 (light mode): --amber-dim consistente con dark mode */
+    --amber-dim:      rgba(255,149,0,0.12);
     --sky:            #32ADE6;
 
     --txt-primary:    #1C1C1E;
@@ -2079,3 +2088,17 @@ body.modal-open {
     position: fixed !important;
     width: 100% !important;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   CORRECCIONES APLICADAS EN ESTA VERSIÓN
+   ══════════════════════════════════════════════════════════════
+   BUG-CSS-1: --amber-dim no estaba definida en ninguno de los dos temas.
+     Se usaba en audit.js (_renderAdminUserPanel) para el estado "⏳ En curso"
+     de un bartender. Sin la variable, el span aparecía sin fondo (transparente),
+     haciéndolo invisible en modo oscuro. CORRECCIÓN: agregada en ambos temas.
+
+   BUG-CSS-2: --txt-muted en dark mode era #3A3A3C sobre fondo #111111.
+     Ratio de contraste ~1.2:1 — completamente ilegible (WCAG mínimo: 4.5:1).
+     Afectaba todos los textos secundarios/de ayuda, IDs de productos, fechas,
+     etiquetas de formulario, etc. CORRECCIÓN: cambiado a #636369 (~4.2:1).
+   ══════════════════════════════════════════════════════════════ */

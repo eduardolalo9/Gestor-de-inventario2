@@ -1,10 +1,13 @@
 // ============================================================
 // SERVICE WORKER — BarInventory
-// Versión: 1.0.0
+// Versión: 1.1.0
 // ============================================================
 
-const CACHE_NAME = 'bar-inventory-v2';
-const CACHE_VERSION = 'v1.1.0';
+// FIX Fase-2: Una sola constante como fuente de verdad para el nombre del caché.
+// Antes había CACHE_NAME='bar-inventory-v2' y CACHE_VERSION='v1.1.0' inconsistentes.
+// Si solo se cambiaba uno, el caché del usuario no se invalidaba correctamente.
+// FIX BUG-SW-1: CACHE_NAME y CACHE_VERSION unificados en una sola constante.
+const CACHE_NAME = 'bar-inventory-v1.1.0';
 
 // Archivos que se guardan para funcionar sin internet
 const ASSETS_TO_CACHE = [
@@ -15,7 +18,7 @@ const ASSETS_TO_CACHE = [
 
 // ── Instalación ──────────────────────────────────────────────
 self.addEventListener('install', event => {
-  console.log('[SW] Instalando versión:', CACHE_VERSION);
+  console.log('[SW] Instalando versión:', CACHE_NAME);
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
@@ -29,7 +32,7 @@ self.addEventListener('install', event => {
 
 // ── Activación ───────────────────────────────────────────────
 self.addEventListener('activate', event => {
-  console.log('[SW] Activado:', CACHE_VERSION);
+  console.log('[SW] Activado:', CACHE_NAME);
   event.waitUntil(
     caches.keys().then(keys => {
       return Promise.all(
@@ -49,8 +52,10 @@ self.addEventListener('fetch', event => {
   // Solo interceptar peticiones GET
   if (event.request.method !== 'GET') return;
 
-  // No interceptar peticiones a Firebase
+  // FIX Fase-2: Ignorar URLs de extensiones del navegador.
+  // El SW intentaba cachearlas y fallaba con "Request scheme chrome-extension unsupported".
   const url = event.request.url;
+  if (url.startsWith('chrome-extension://') || url.startsWith('chrome://') || url.startsWith('moz-extension://')) return;
   if (
     url.includes('firebaseio.com') ||
     url.includes('googleapis.com') ||
@@ -111,6 +116,6 @@ self.addEventListener('message', event => {
   }
 
   if (event.data.type === 'GET_VERSION') {
-    event.ports[0].postMessage({ version: CACHE_VERSION });
+    event.ports[0].postMessage({ version: CACHE_NAME });
   }
 });
