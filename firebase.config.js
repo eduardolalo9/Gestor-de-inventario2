@@ -53,7 +53,7 @@ window._firebaseReady = false;
     const FIREBASE_CONFIG = (typeof window.FIREBASE_CREDENTIALS === 'object' && window.FIREBASE_CREDENTIALS)
         ? window.FIREBASE_CREDENTIALS
         : {
-window.FIREBASE_CREDENTIALS = {
+const firebaseConfig = {
   apiKey: "AIzaSyDugu23uEgacqMUTsoBF8i7xfyDIDbiv0M",
   authDomain: "bar-inventario-1109e.firebaseapp.com",
   databaseURL: "https://bar-inventario-1109e-default-rtdb.firebaseio.com",
