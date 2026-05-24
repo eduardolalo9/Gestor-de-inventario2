@@ -18,7 +18,7 @@
  *     6. cb de app.js (registrado en P1) NUNCA dispara
  *     → app se queda en "Verificando sesión…" para siempre
  *
- * CORRECCIÓN BUG-1:
+ *  CORRECCIÓN BUG-1:
  *   Solo recrear _authReady cuando hay CAMBIO DE USUARIO
  *   (es decir, cuando _lastAuthUid ya tenía un valor diferente).
  *   En el PRIMER LOGIN (_lastAuthUid era null), no recrear P1.
@@ -161,9 +161,8 @@ export function initAuth() {
                 clearInterval(_retryInterval);
                 console.error('[Auth] Firebase Auth no disponible después de 2s.');
                 showAuthError(
-                    '⚠️ Error de conexión: Firebase no está disponible.
-' +
-                    'Verifica tu internet y recarga la página.'
+                    `⚠️ Error de conexión: Firebase no está disponible.
+Verifica tu internet y recarga la página.`
                 );
                 _authResolve(null);
             }
