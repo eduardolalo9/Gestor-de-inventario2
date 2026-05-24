@@ -1,7 +1,13 @@
 /**
- * js/reportes.js — v2.1
+ * js/reportes.js — v2.2
  * ══════════════════════════════════════════════════════════════
  * Módulo de reportes publicados.
+ *
+ * NUEVO v2.2:
+ * ──────────────────────────────────────────────────────────────
+ * ① eliminarReporte(reporteId) — función para eliminar un reporte
+ *    publicado (solo admin). Solicita confirmación antes de
+ *    eliminar de Firestore. Actualiza UI en tiempo real.
  *
  * NUEVO v2.1:
  * ──────────────────────────────────────────────────────────────
@@ -34,6 +40,7 @@
  *       → Notifica a todos los usuarios (broadcast)
  *   Usuario → ve sección "Reportes" en Historia
  *     → descargarReporteExcel(reporteId) → .xlsx local
+ *   Admin → eliminarReporte(reporteId) → elimina de Firestore
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -272,11 +279,41 @@ export async function publicarReporte(titulo = '') {
         });
 
         showNotification(`✅ "${tituloFinal}" publicado y notificado`);
-        import('./render.js').then(m => m.renderTab());
+        import('./render.js').then(m => m.renderTab()).catch(() => {});
 
     } catch (err) {
         console.error('[Reportes] Error al publicar:', err.message);
         showNotification('⚠️ Error al publicar reporte: ' + err.message);
+    }
+}
+
+// ═════════════════════════════════════════════════════════════
+//  ELIMINAR REPORTE (admin) — v2.2
+// ═════════════════════════════════════════════════════════════
+
+export async function eliminarReporte(reporteId) {
+    if (state.userRole !== 'admin') {
+        showNotification('⚠️ Solo el administrador puede eliminar reportes');
+        return;
+    }
+    if (!window._db) { showNotification('⚠️ Firebase no disponible'); return; }
+
+    const reporte = (state.reportesPublicados || []).find(r => r._id === reporteId);
+    if (!reporte) { showNotification('⚠️ Reporte no encontrado'); return; }
+
+    // Confirmación
+    if (!confirm(`¿Eliminar reporte "${reporte.titulo}"?\n\nEsta acción es irreversible.`)) {
+        return;
+    }
+
+    try {
+        showNotification('🗑️ Eliminando reporte…');
+        await window._db.collection('reportesPublicados').doc(reporteId).delete();
+        showNotification(`✅ "${reporte.titulo}" eliminado`);
+        import('./render.js').then(m => m.renderTab()).catch(() => {});
+    } catch (err) {
+        console.error('[Reportes] Error al eliminar:', err.message);
+        showNotification('⚠️ Error al eliminar reporte: ' + err.message);
     }
 }
 
@@ -422,6 +459,7 @@ export function renderReportesPublicados() {
     }
 
     const AREA_LABELS = { almacen: 'Almacén', barra1: 'Barra 1', barra2: 'Barra 2' };
+    const isAdmin = state.userRole === 'admin';
 
     let html = '<div class="space-y-2">';
     reportes.forEach((r, idx) => {
@@ -441,19 +479,31 @@ export function renderReportesPublicados() {
                         ${AREA_KEYS.map(a => {
                             const st = (r.auditoriaStatus || {})[a];
                             return st === 'completada'
-                                ? `<span style="font-size:0.60rem;font-weight:700;padding:1px 7px;border-radius:3px;background:var(--green-dim);color:var(--green-text);border:1px solid rgba(34,197,94,.20);">✓ ${AREA_LABELS[a]}</span>`
+                                ? `<span style="font-size:0.60rem;font-weight:700;padding:1px 7px;border-radius:3px;background:var(--green-dim);color:var(--green-text);border:1px solid rgba(34,197,94,.16);">${AREA_LABELS[a]}</span>`
                                 : `<span style="font-size:0.60rem;padding:1px 7px;border-radius:3px;background:rgba(148,163,184,.10);color:var(--txt-muted);">${AREA_LABELS[a]}</span>`;
                         }).join('')}
                     </div>
                 </div>
-                <button data-id="${escapeHtml(r._id)}"
-                    onclick="window.descargarReporteExcel(this.dataset.id)"
-                    style="padding:7px 12px;background:linear-gradient(135deg,#065f46,#047857);
-                           border:1px solid rgba(34,197,94,.28);border-radius:var(--r-md);
-                           color:#86efac;font-size:0.72rem;font-weight:600;cursor:pointer;
-                           flex-shrink:0;white-space:nowrap;min-height:auto;">
-                    ⬇️ Excel
-                </button>
+                <div style="display:flex;gap:6px;flex-shrink:0;">
+                    <button data-id="${escapeHtml(r._id)}"
+                        onclick="window.descargarReporteExcel(this.dataset.id)"
+                        style="padding:7px 12px;background:linear-gradient(135deg,#065f46,#047857);
+                               border:1px solid rgba(34,197,94,.28);border-radius:var(--r-md);
+                               color:#86efac;font-size:0.72rem;font-weight:600;cursor:pointer;
+                               flex-shrink:0;white-space:nowrap;min-height:auto;">
+                        ⬇️ Excel
+                    </button>
+                    ${isAdmin ? `<button data-id="${escapeHtml(r._id)}"
+                        onclick="window.eliminarReporte(this.dataset.id)"
+                        style="padding:7px 10px;background:linear-gradient(135deg,#7f1d1d,#991b1b);
+                               border:1px solid rgba(239,68,68,.28);border-radius:var(--r-md);
+                               color:#fca5a5;font-size:0.72rem;font-weight:600;cursor:pointer;
+                               flex-shrink:0;white-space:nowrap;min-height:auto;
+                               transition:all 0.2s ease;hover:background:linear-gradient(135deg,#991b1b,#b91c1c);"
+                        title="Eliminar reporte">
+                        🗑️
+                    </button>` : ''}
+                </div>
             </div>
         </div>`;
     });
@@ -464,3 +514,4 @@ export function renderReportesPublicados() {
 // ─── Bindings globales ────────────────────────────────────────
 window.openPublicarReporteModal = openPublicarReporteModal;
 window.descargarReporteExcel    = descargarReporteExcel;
+window.eliminarReporte          = eliminarReporte;
