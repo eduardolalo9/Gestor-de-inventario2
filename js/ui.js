@@ -46,18 +46,23 @@ export function escapeHtml(unsafe) {
 
 export function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    const moonIcon = document.getElementById('themeIconMoon');
-    const sunIcon  = document.getElementById('themeIconSun');
-    const sbLabel  = document.getElementById('sbThemeLabel');
+    const moonIcon    = document.getElementById('themeIconMoon');
+    const sunIcon     = document.getElementById('themeIconSun');
+    const sbLabel     = document.getElementById('sbThemeLabel');
+    // FIX BUG-IDX-6: sincronizar aria-pressed con el estado real del tema.
+    // El atributo indica a lectores de pantalla si el tema oscuro está activo.
+    const themeBtn    = document.getElementById('themeToggleBtn');
 
     if (theme === 'light') {
         moonIcon && moonIcon.classList.add('hidden');
         sunIcon  && sunIcon.classList.remove('hidden');
         if (sbLabel) sbLabel.textContent = 'Modo oscuro';
+        if (themeBtn) themeBtn.setAttribute('aria-pressed', 'false');
     } else {
         moonIcon && moonIcon.classList.remove('hidden');
         sunIcon  && sunIcon.classList.add('hidden');
         if (sbLabel) sbLabel.textContent = 'Modo claro';
+        if (themeBtn) themeBtn.setAttribute('aria-pressed', 'true');
     }
 
     try { localStorage.setItem('inventarioApp_theme', theme); } catch (_) {}
@@ -295,3 +300,13 @@ window.showNotification    = showNotification;
 window.showConfirm         = showConfirm;
 window.updateSearchTerm    = updateSearchTerm;
 window.updateSelectedGroup = updateSelectedGroup;
+
+// ══════════════════════════════════════════════════════════════
+// CORRECCIONES APLICADAS EN ESTA VERSIÓN (v2.3)
+// ══════════════════════════════════════════════════════════════
+// BUG-IDX-6 (coordinado con index.html): applyTheme() ahora sincroniza
+//   el atributo aria-pressed del botón themeToggleBtn cada vez que el tema
+//   cambia. El botón en index.html ya tiene aria-pressed="true" como valor
+//   inicial (dark mode por defecto). Sin esta sincronización, el atributo
+//   quedaba desactualizado tras el primer toggleTheme(), indicando "oscuro"
+//   aunque el usuario hubiera cambiado a modo claro.
