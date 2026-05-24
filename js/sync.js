@@ -1149,6 +1149,13 @@ export async function resetConteoAtomicoEnFirestore() {
                 'auditoriaStatus.barra2':  'pendiente',
                 auditoriaConteo:           {},
                 _lastModified:             resetTs,
+                // FIX BUG-SYNC-1 (CRÍTICO): _resetCicloTs nunca se escribía en
+                // Firestore. La lógica de _applyMainDocData depende de este campo
+                // para detectar que el admin inició un nuevo ciclo y llamar
+                // applyRemoteReset() en los bartenders. Sin este campo, los
+                // bartenders NO recibían el reset → seguían viendo los conteos
+                // del ciclo anterior y no podían iniciar nuevos.
+                _resetCicloTs:             resetTs,
             });
         });
 
@@ -1171,3 +1178,15 @@ export async function resetConteoAtomicoEnFirestore() {
 
 // ── Binding global ────────────────────────────────────────────
 window.syncToCloud = syncToCloud;
+
+// ══════════════════════════════════════════════════════════════
+// CORRECCIONES APLICADAS EN ESTA VERSIÓN (v2.2)
+// ══════════════════════════════════════════════════════════════
+// BUG-SYNC-1 (CRÍTICO): _resetCicloTs nunca se escribía en Firestore.
+//   resetConteoAtomicoEnFirestore() actualizaba auditoriaStatus y auditoriaConteo
+//   pero omitía el campo _resetCicloTs. La función _applyMainDocData() en los
+//   dispositivos de los bartenders depende de este campo para detectar un nuevo
+//   ciclo y llamar applyRemoteReset(). Sin él, los bartenders nunca recibían el
+//   reset del admin → seguían viendo conteos del ciclo anterior y no podían
+//   iniciar un nuevo conteo. CORRECCIÓN: se agrega _resetCicloTs: resetTs a la
+//   transacción de resetConteoAtomicoEnFirestore().

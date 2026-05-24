@@ -152,6 +152,18 @@ window.addEventListener('DOMContentLoaded', () => {
 
       initAuditUser();
       loadFromLocalStorage();
+
+      // FIX BUG-APP-1: INITIAL_PRODUCTS se importaba pero nunca se usaba.
+      // En primera ejecución (sin datos en localStorage), state.products
+      // permanecía vacío y la app aparecía en blanco. Ahora se cargan los
+      // productos de ejemplo para que el admin tenga un catálogo funcional
+      // desde el primer arranque. Solo se aplica si no hay productos locales
+      // Y el usuario es admin (no queremos sobreescribir a usuarios).
+      if (state.products.length === 0 && state.userRole === 'admin') {
+        state.products = INITIAL_PRODUCTS.map(p => ({ ...p }));
+        console.info('[App] ✓ Catálogo inicial cargado:', INITIAL_PRODUCTS.length, 'productos de ejemplo.');
+      }
+
       syncStockByAreaFromConteo();
 
       // FIX BUG-C: El setInterval de recovery que existía aquí fue eliminado.
@@ -255,3 +267,12 @@ window.addEventListener('DOMContentLoaded', () => {
   // Arranque inicial
   _waitForUser();
 });
+
+// ══════════════════════════════════════════════════════════════
+// CORRECCIONES APLICADAS EN ESTA VERSIÓN (v2.5)
+// ══════════════════════════════════════════════════════════════
+// BUG-APP-1: INITIAL_PRODUCTS se importaba desde constants.js pero nunca se usaba.
+//   En primera ejecución sin datos en localStorage, state.products quedaba vacío
+//   y la app aparecía completamente en blanco para el admin. CORRECCIÓN: se carga
+//   INITIAL_PRODUCTS cuando state.products.length === 0 y userRole === 'admin',
+//   después de loadFromLocalStorage() en _waitForUser().

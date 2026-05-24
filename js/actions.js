@@ -230,7 +230,20 @@ function openOrderModal() {
 
 window._cartInc    = id => { const i = state.cart.find(x => x.id === id); if (i) { i.quantity = Math.round((i.quantity + 1) * 1000) / 1000; openOrderModal(); } };
 window._cartDec    = id => { const i = state.cart.find(x => x.id === id); if (i && i.quantity > 1) { i.quantity = Math.round((i.quantity - 1) * 1000) / 1000; openOrderModal(); } };
-window._cartRemove = id => { state.cart = state.cart.filter(x => x.id !== id); openOrderModal(); };
+// FIX BUG-ACT-1: _cartRemove llamaba openOrderModal() incluso cuando el carrito
+// quedaba vacío. openOrderModal tiene un guard que muestra notificación y hace
+// return, pero el modal ya estaba abierto → el usuario veía el modal sin cerrarse
+// con la notificación "El carrito está vacío". Ahora: si el carrito queda vacío
+// tras el filtrado, se cierra el modal directamente en lugar de intentar reabrirlo.
+window._cartRemove = id => {
+  state.cart = state.cart.filter(x => x.id !== id);
+  if (state.cart.length === 0) {
+    closeOrderModal();
+    showNotification('🛒 Carrito vacío');
+  } else {
+    openOrderModal();
+  }
+};
 window._cartSetQty = (id, val) => {
   const i = state.cart.find(x => x.id === id);
   if (!i) return;
@@ -812,4 +825,14 @@ window.addAbiertaInModal      = addAbiertaInModal;
 window.closeInventarioModal   = closeInventarioModal;
 window.saveInventarioModal    = saveInventarioModal;
 
-console.info('[Actions] ✓ v3.3 — Excel auditoría con cálculo de fracciones corregido (products.js v2.4).');
+console.info('[Actions] ✓ v3.4 — _cartRemove cierra modal cuando carrito queda vacío (BUG-ACT-1).');
+
+// ══════════════════════════════════════════════════════════════
+// CORRECCIONES APLICADAS EN ESTA VERSIÓN (v3.4)
+// ══════════════════════════════════════════════════════════════
+// BUG-ACT-1: _cartRemove llamaba openOrderModal() incluso cuando el carrito
+//   quedaba vacío tras eliminar el último item. openOrderModal() tiene un guard
+//   que hace return si cart.length === 0, pero sin cerrar el modal primero → el
+//   modal permanecía abierto sin contenido y con una notificación flotante.
+//   CORRECCIÓN: si cart.length === 0 después del filtrado, se llama
+//   closeOrderModal() + showNotification directamente, sin pasar por openOrderModal().

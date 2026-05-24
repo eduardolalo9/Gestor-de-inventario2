@@ -17,12 +17,13 @@
  *   (pesoVacia) que debe descontarse individualmente.
  *
  *   Ejemplo: 2 botellas abiertas a 30oz y 50oz
- *            pesoVacia = 14oz, pesoLlena = 55oz, contenido = 41oz
- *     INCORRECTO (v2.3): (30 + 50) / 41           = 1.951 botellas
- *     CORRECTO   (v2.4): (30-14)/41 + (50-14)/41  = 0.390 + 0.878
- *                                                  = 1.268 botellas
- *   Error de sobreestimación: ~54% con 2 botellas,
- *   crece con cada botella adicional.
+ *            PESO_BOTELLA_VACIA_OZ = 25oz, pesoLlena = 55oz, contenido = 30oz
+ *            (Nota: versiones anteriores usaban 14oz en ejemplos; el valor real es 25.0oz)
+ *     INCORRECTO (v2.3): (30 + 50) / 30           = 2.667 botellas
+ *     CORRECTO   (v2.4): (30-25)/30 + (50-25)/30  = 0.167 + 0.833
+ *                                                  = 1.000 botellas
+ *   Error de sobreestimación: proporcional a la diferencia entre
+ *   pesoVacia configurada y la usada en el ejemplo incorrecto.
  *
  * CORRECCIÓN:
  *   Se calcula la fracción de CADA botella abierta individualmente
@@ -238,9 +239,9 @@ export function calcularTotalMultiUsuario(productId, area) {
   //   No se descontaba pesoVacia por cada botella → sobreestimación grave.
   //
   //   Ejemplo: 2 botellas abiertas a 30oz y 50oz
-  //            pesoVacia=14oz, pesoLlena=55oz, contenido=41oz
-  //     v2.3 → (30+50)/41           = 1.951  ← incorrecto (+54%)
-  //     v2.4 → (30-14)/41+(50-14)/41 = 1.268  ← correcto
+  //            PESO_BOTELLA_VACIA_OZ=25oz, pesoLlena=55oz, contenido=30oz
+  //     v2.3 → (30+50)/30           = 2.667  ← incorrecto (suma / contenido de 1 botella)
+  //     v2.4 → (30-25)/30+(50-25)/30 = 1.000  ← correcto (fracción por botella)
   //
   // AHORA (v2.4): se calcula la fracción de cada botella individualmente
   //   (idéntico a calcularTotalConAbiertas), luego se promedian las fracciones
@@ -534,3 +535,12 @@ export function finalizarInventario() {
   return snapshot;
 }
 
+
+// ══════════════════════════════════════════════════════════════
+// CORRECCIONES APLICADAS EN ESTA VERSIÓN (v2.6)
+// ══════════════════════════════════════════════════════════════
+// BUG-PROD-1 (Documentación): Los comentarios en calcularTotalMultiUsuario usaban
+//   pesoVacia = 14oz en los ejemplos numéricos, pero PESO_BOTELLA_VACIA_OZ = 25.0oz
+//   (definido en constants.js). Esto no afectaba el cálculo en runtime (el código
+//   usa la constante importada correctamente), pero generaba confusión al leer el
+//   código y al verificar los ejemplos. CORRECCIÓN: ejemplos actualizados con 25oz.
