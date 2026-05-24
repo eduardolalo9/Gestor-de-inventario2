@@ -81,10 +81,6 @@ window._firebaseReady = false;
     try {
         // ── 1. Inicializar App (compat) ───────────────────────
         // Evitar doble-inicialización si el módulo se recarga
-        // Usar credenciales locales si existen
-if (typeof window.FIREBASE_CREDENTIALS !== 'undefined') {
-    firebaseConfig = window.FIREBASE_CREDENTIALS;
-}
         const app = firebase.apps.length === 0
             ? firebase.initializeApp(FIREBASE_CONFIG)
             : firebase.apps[0];
