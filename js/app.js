@@ -1,25 +1,26 @@
 /**
- * js/app.js — Versión Corregida y Estable (v2.5)
+ * js/app.js — v2.5 Mejorado (Estable)
  * 
- * Compatible con carga como <script src="js/app.js"> (NO módulo)
- * Todos los demás archivos JS se cargan como scripts globales en index.html
+ * Versión optimizada, limpia y robusta para carga como script normal.
+ * Corrige duplicaciones, mejora manejo de errores y rendimiento.
  */
 
-console.info('[App] BarInventory arrancando…');
+console.info('[App] BarInventory v2.5 arrancando...');
 
-// ── Service Worker Registration ─────────────────────────────────────
+// ── Registro de Service Worker ─────────────────────────────────────
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js', { scope: './' })
             .then(reg => {
-                console.info('[SW] Registrado — scope:', reg.scope);
+                console.info('[SW] Registrado con éxito — Scope:', reg.scope);
+
                 reg.addEventListener('updatefound', () => {
-                    const nw = reg.installing;
-                    if (nw) {
-                        nw.addEventListener('statechange', () => {
-                            if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-                                console.info('[SW] Nueva versión disponible.');
-                                window.showNotification?.('🔄 Nueva versión disponible — recarga la página');
+                    const newWorker = reg.installing;
+                    if (newWorker) {
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                console.info('[SW] Nueva versión disponible');
+                                window.showNotification?.('🔄 Nueva versión lista — Recarga la página');
                             }
                         });
                     }
@@ -27,49 +28,50 @@ if ('serviceWorker' in navigator) {
             })
             .catch(err => console.warn('[SW] Error al registrar:', err));
 
-        // Escuchar mensajes del Service Worker
+        // Escuchar mensajes del SW
         navigator.serviceWorker.addEventListener('message', event => {
-            if (event.data?.type === 'SYNC_PENDING' && window._db && navigator.onLine) {
-                syncToCloud?.().catch(e => console.warn('[SW→App] sync falló:', e));
+            if (event.data?.type === 'SYNC_PENDING' && navigator.onLine) {
+                syncToCloud?.().catch(e => console.warn('[SW] Sync falló:', e));
             }
         });
     });
 } else {
-    console.info('[SW] Service Workers no soportados en este navegador.');
+    console.info('[SW] Service Worker no disponible en este navegador.');
 }
 
 // ── Cerrar sidebar con tecla ESC ───────────────────────────────────
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
-        const anyModalOpen = ['productModal', 'orderModal', 'inventarioModal', 'ajustesModal']
+        const modalsOpen = ['productModal', 'orderModal', 'inventarioModal', 'ajustesModal']
             .some(id => !document.getElementById(id)?.classList.contains('hidden'));
-        if (!anyModalOpen && typeof window.sbClose === 'function') {
+        
+        if (!modalsOpen && typeof window.sbClose === 'function') {
             window.sbClose();
         }
     }
 });
 
-// ── Guardar datos antes de cerrar pestaña ───────────────────────────
+// ── Guardar datos antes de cerrar la pestaña ───────────────────────
 window.addEventListener('beforeunload', () => {
     stopRealtimeListeners?.();
     try {
         saveToLocalStorage?.();
     } catch (e) {
-        console.warn('[App] Error guardando al cerrar:', e);
+        console.warn('[App] Error guardando datos al cerrar:', e);
     }
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// DOM Loaded - Inicialización Principal
+// Inicialización Principal cuando todo ha cargado
 // ═══════════════════════════════════════════════════════════════════════
 window.addEventListener('load', () => {
-    console.info('[App] Todos los scripts cargados — iniciando aplicación...');
+    console.info('[App] Todos los scripts cargados — Iniciando aplicación...');
 
-    // Inicializar componentes básicos
+    // Inicializaciones básicas
     if (typeof initTheme === 'function') initTheme();
     if (typeof initAuth === 'function') initAuth();
 
-    // Enter en campos de login
+    // Soporte Enter en login
     const loginEmail = document.getElementById('loginEmail');
     const loginPassword = document.getElementById('loginPassword');
 
@@ -81,6 +83,7 @@ window.addEventListener('load', () => {
             }
         });
     }
+
     if (loginPassword) {
         loginPassword.addEventListener('keydown', e => {
             if (e.key === 'Enter') {
@@ -90,17 +93,17 @@ window.addEventListener('load', () => {
         });
     }
 
-    // Variables de control
     let _appInitialized = false;
 
+    // Función que se ejecuta cuando hay usuario autenticado
     function _waitForUser() {
         getAuthReady?.().then(user => {
             if (!user) {
-                console.info('[App] Esperando login...');
+                console.info('[App] Esperando autenticación...');
                 return;
             }
 
-            console.info('[App] Usuario autenticado — cargando datos...');
+            console.info('[App] Usuario autenticado — Cargando datos...');
 
             initAuditUser?.();
             loadFromLocalStorage?.();
@@ -108,7 +111,7 @@ window.addEventListener('load', () => {
 
             switchTab(state.activeTab || 'inicio');
 
-            // Manejo de parámetro ?tab= para shortcuts PWA
+            // Aplicar parámetro ?tab= de PWA shortcuts
             if (!_appInitialized) {
                 const urlTab = new URLSearchParams(window.location.search).get('tab');
                 const VALID_TABS = ['inicio', 'inventario', 'productos', 'pedidos', 'historia', 'ajustes', 'notificaciones'];
@@ -123,42 +126,42 @@ window.addEventListener('load', () => {
             if (!_appInitialized) {
                 _appInitialized = true;
 
-                // Eventos de archivos
+                // Delegación de eventos para archivos
                 document.body.addEventListener('change', function(e) {
                     if (e.target?.id === 'fileInput') handleFileImport?.(e);
                     if (e.target?.id === 'importDataInput') importFullData?.(e);
                 });
 
-                // Estado de red
+                // Estado de conexión
                 window.addEventListener('online', updateNetworkStatus);
                 window.addEventListener('offline', updateNetworkStatus);
 
-                // Auto-save
+                // Auto-save periódico
                 setInterval(() => {
                     if (typeof smartAutoSave === 'function') smartAutoSave();
-                }, AUTO_SAVE_INTERVAL_MS || 30000);
+                }, window.AUTO_SAVE_INTERVAL_MS || 30000);
 
                 // Sync de recuperación
                 setInterval(() => {
                     if (navigator.onLine && window._db && state.userRole !== null && state._cloudSyncPending) {
                         syncToCloud?.().catch(e => console.warn('[Recovery] Sync falló:', e));
                     }
-                }, SYNC_RECOVERY_INTERVAL_MS || 180000);
+                }, window.SYNC_RECOVERY_INTERVAL_MS || 180000);
 
                 updateNetworkStatus();
             }
 
             console.info('[App] ✓ Aplicación iniciada correctamente.');
         }).catch(err => {
-            console.error('[App] Error en autenticación:', err);
+            console.error('[App] Error durante autenticación:', err);
         });
     }
 
-    // Registrar listener de cambios de autenticación
+    // Registrar listener de cambios de auth
     if (typeof onAuthChange === 'function') {
         onAuthChange(_waitForUser);
     }
 
-    // Primer intento
+    // Primer intento de carga
     _waitForUser();
 });
