@@ -132,13 +132,50 @@ function showAuthError(message) {
 // ═════════════════════════════════════════════════════════════
 
 export function initAuth() {
+    // FIX BUG-FIREBASE-2: En lugar de fallar inmediatamente cuando _auth === null,
+    // se espera hasta 2 segundos antes de declarar error.
+    //
+    // PROBLEMA ANTERIOR:
+    //   initAuth() comprobaba window._auth en el instante de su llamada.
+    //   En PWA con red lenta, los scripts del SDK de Firebase (cargados desde
+    //   gstatic.com CDN) pueden llegar con 200-800ms de retraso. En ese
+    //   momento initAuth() ya había corrido y encontrado _auth === null,
+    //   mostrando "Firebase Auth no está disponible" aunque Firebase iba a
+    //   inicializarse correctamente unos milisegundos después.
+    //
+    // SOLUCIÓN: si _auth no está disponible, se reintenta cada 200ms hasta
+    //   un máximo de 2 segundos. Si al cabo de 2s sigue sin estar disponible,
+    //   entonces SÍ es un error real (CDN bloqueado, sin internet, etc.) y se
+    //   muestra el mensaje de error con instrucción de recarga.
     if (!window._auth) {
-        console.error('[Auth] Firebase Auth no disponible.');
-        showAuthError('⚠️ Error de configuración: Firebase Auth no está disponible.');
-        _authResolve(null);
+        const _retryStart = Date.now();
+        const _retryInterval = setInterval(() => {
+            if (window._auth) {
+                // SDK disponible — inicializar normalmente
+                clearInterval(_retryInterval);
+                console.info('[Auth] Firebase Auth disponible tras espera de',
+                    (Date.now() - _retryStart), 'ms.');
+                _startAuthListener();
+            } else if (Date.now() - _retryStart > 2000) {
+                // Pasaron 2s y sigue sin haber Auth → error real
+                clearInterval(_retryInterval);
+                console.error('[Auth] Firebase Auth no disponible después de 2s.');
+                showAuthError(
+                    '⚠️ Error de conexión: Firebase no está disponible.
+' +
+                    'Verifica tu internet y recarga la página.'
+                );
+                _authResolve(null);
+            }
+        }, 200);
         return;
     }
 
+    _startAuthListener();
+}
+
+// ── Listener real de Auth — extraído para poder llamarlo desde el retry ──
+function _startAuthListener() {
     window._auth.onAuthStateChanged(async function (user) {
         if (_authChangeInProgress) {
             await new Promise(r => {
@@ -330,3 +367,19 @@ export async function signOutUser() {
 
 window.handleLogin = handleLogin;
 window.signOutUser = signOutUser;
+
+// ══════════════════════════════════════════════════════════════
+// CORRECCIONES APLICADAS EN ESTA VERSIÓN (v3.3)
+// ══════════════════════════════════════════════════════════════
+// BUG-FIREBASE-2 (CRÍTICO): initAuth() fallaba inmediatamente sin retry.
+//   En PWA con conexión lenta o CDN con latencia, los scripts de Firebase
+//   (firebase-auth-compat.js, etc.) se cargan desde gstatic.com CDN y
+//   pueden tardar 200-800ms en llegar. initAuth() se llamaba en
+//   DOMContentLoaded antes de que el SDK terminara de inicializarse,
+//   encontraba window._auth === null y mostraba el error de inmediato.
+//
+//   CORRECCIÓN: se agrega un bucle de retry de 200ms con timeout de 2s.
+//   Si _auth está disponible antes de 2s (caso normal), se procede.
+//   Si después de 2s sigue en null, ahí SÍ es un error real de red/config.
+//   La función _startAuthListener() se extrae para poder llamarla tanto
+//   desde la ruta normal como desde el retry.
