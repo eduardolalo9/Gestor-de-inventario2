@@ -682,11 +682,22 @@ export async function auditoriaResetear() {
 
     if (isAdmin) {
         // ── Reset completo ──────────────────────────────────────
+        // FIX BUG-AUDIT-1 (CRÍTICO): NO se toca state.inventarioConteo aquí.
+        // inventarioConteo es el conteo OPERATIVO diario (alimenta stockByArea,
+        // usado por Inicio/Productos/Pedidos) — es un feature totalmente distinto
+        // de la auditoría ciega (auditoriaConteo/auditoriaConteoPorUsuario).
+        // ANTES: auditoriaResetear() ponía state.inventarioConteo = {} junto con
+        // los campos de auditoría. Consecuencia: cada vez que el admin iniciaba
+        // un nuevo ciclo de AUDITORÍA, se borraba también el inventario diario ya
+        // capturado por todos los bartenders en todos los dispositivos — pérdida
+        // de datos totalmente ajena a lo que el admin pidió confirmar en el diálogo.
+        // Prueba de que era un descuido: resetConteoAtomicoEnFirestore() (la mitad
+        // en la nube de este mismo reset) nunca tocó la colección stockAreas —
+        // solo el reset LOCAL sobre-alcanzaba. CORRECCIÓN: se elimina la línea.
         state.auditoriaStatus           = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
         state.auditoriaConteo           = {};
         state.auditoriaConteoPorUsuario = {};
         state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
-        state.inventarioConteo          = {};
         state.auditoriaView             = 'selection';
         state.auditoriaAreaActiva       = null;
         state.isAuditoriaMode           = false;
@@ -811,11 +822,15 @@ export function applyRemoteReset() {
 
     console.info('[Audit] Aplicando reset remoto iniciado por el admin…');
 
+    // FIX BUG-AUDIT-1 (CRÍTICO — ver auditoriaResetear() más arriba para el
+    // detalle completo): no se toca state.inventarioConteo. Este reset es
+    // exclusivamente de la auditoría ciega; el inventario operativo del
+    // bartender (conteo diario ya guardado en este dispositivo) no debe
+    // desaparecer solo porque el admin inició un nuevo ciclo de auditoría.
     state.auditoriaStatus            = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
     state.auditoriaConteo            = {};
     state.auditoriaConteoPorUsuario  = {};
     state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
-    state.inventarioConteo           = {};
     state.auditoriaView              = 'selection';
     state.auditoriaAreaActiva        = null;
     state.isAuditoriaMode            = false;
@@ -833,3 +848,21 @@ window.auditoriaFinalizarConteo  = auditoriaFinalizarConteo;
 window.auditoriaVolverSeleccion  = auditoriaVolverSeleccion;
 window.auditoriaResetear         = auditoriaResetear;
 window.reabrirConteoUsuario      = reabrirConteoUsuario;
+
+// ══════════════════════════════════════════════════════════════
+// CORRECCIONES APLICADAS EN ESTA VERSIÓN (v2.2)
+// ══════════════════════════════════════════════════════════════
+// BUG-AUDIT-1 (CRÍTICO — pérdida de datos entre features):
+//   auditoriaResetear() (rama admin) y applyRemoteReset() (bartenders)
+//   incluían `state.inventarioConteo = {};` junto al resto del reset de
+//   auditoría. inventarioConteo es el conteo OPERATIVO diario (alimenta
+//   product.stockByArea, usado en Inicio/Productos/Pedidos) — una función
+//   totalmente distinta de la auditoría ciega. Cada vez que el admin
+//   iniciaba un nuevo ciclo de auditoría, TODOS los dispositivos perdían
+//   su inventario diario ya contado, sin relación con lo que el diálogo
+//   de confirmación anunciaba ("se borrarán los conteos de auditoría").
+//   CORRECCIÓN: se eliminan ambas líneas; el reset de auditoría ahora
+//   solo toca auditoriaStatus/auditoriaConteo/auditoriaConteoPorUsuario/
+//   conteoFinalizadoPorUsuario/auditoriaView/auditoriaAreaActiva/
+//   isAuditoriaMode — igual que ya hacía resetConteoAtomicoEnFirestore()
+//   en sync.js, que nunca tocó la colección stockAreas.

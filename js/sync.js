@@ -33,6 +33,14 @@
  *   comparación posterior `cloudTs <= _getLocalAreaTs(...)` era
  *   idéntica y redundante). Eliminada la duplicación.
  *
+ * BUG-CHUNK-1 (CRÍTICO) _writeChunkedSubcollection — el batch de
+ *   limpieza podía añadir delete() y set() sobre el MISMO id de
+ *   documento final, en un orden que dependía de la iteración no
+ *   garantizada de existingSnap.forEach. En el peor caso, un chunk
+ *   de historial (inventoriesChunks) quedaba borrado en vez de
+ *   actualizado. Reescrito para que cada id reciba una sola
+ *   operación (o set, o delete), nunca ambas.
+ *
  * ─── ARQUITECTURA DE LISTENERS (10 onSnapshot activos) ───────
  *   [1]    inventarioApp/{DOC_ID}                  → doc principal
  *   [2-4]  inventarioApp/{DOC_ID}/stockAreas/{area} x3
@@ -105,28 +113,53 @@ async function _writeChunkedSubcollection(docRef, subcollName, dataArray) {
     const colRef      = docRef.collection(subcollName);
     const totalChunks = Math.max(1, Math.ceil(dataArray.length / MAX_CHUNK_SIZE));
 
-    const writeBatch = window._db.batch();
+    // Fase 1: escribir los chunks nuevos en documentos temporales 'new_chunk_N'.
+    // Atómico (un solo batch). Los chunks anteriores ('chunk_N') no se tocan
+    // todavía, así que un lector que consulte a mitad de esta fase sigue viendo
+    // el historial anterior completo (desactualizado pero consistente).
+    const stagingBatch = window._db.batch();
     for (let i = 0; i < totalChunks; i++) {
-        writeBatch.set(colRef.doc('new_chunk_' + i), {
+        stagingBatch.set(colRef.doc('new_chunk_' + i), {
             items:       dataArray.slice(i * MAX_CHUNK_SIZE, (i + 1) * MAX_CHUNK_SIZE),
             chunkIndex:  i,
             totalChunks: totalChunks,
             _updatedAt:  Date.now(),
         });
     }
-    await writeBatch.commit();
+    await stagingBatch.commit();
 
+    // Fase 2: promover 'new_chunk_N' → 'chunk_N' y eliminar tanto los chunks
+    // sobrantes de un ciclo anterior (si totalChunks bajó) como los temporales.
+    //
+    // FIX BUG-CHUNK-1 (CRÍTICO): la versión anterior armaba un único batch
+    // recorriendo existingSnap y, para el MISMO id final (ej. 'chunk_0'),
+    // podía añadir un delete() (al procesar el doc viejo 'chunk_0') y un
+    // set() (al procesar 'new_chunk_0', renombrado a 'chunk_0'). El resultado
+    // depende de qué operación quedó añadida al batch en último lugar, y eso
+    // depende del orden de iteración de existingSnap.forEach — orden que la
+    // API de Firestore NO garantiza para un .get() sin orderBy explícito.
+    // Si el delete quedaba después del set, ese chunk se BORRABA en vez de
+    // actualizarse → pérdida silenciosa de ese trozo del historial de
+    // inventarios. CORRECCIÓN: ahora ningún id de documento recibe delete()
+    // y set() dentro del mismo batch. Los ids finales (chunk_0..N-1) solo
+    // reciben set(); los temporales (new_chunk_*) y los sobrantes (índice
+    // ≥ totalChunks) solo reciben delete() — sin ambigüedad posible.
     const existingSnap = await colRef.get();
-    const cleanBatch   = window._db.batch();
+    const finalBatch   = window._db.batch();
+    const finalIds     = new Set();
+    for (let i = 0; i < totalChunks; i++) finalIds.add('chunk_' + i);
+
     existingSnap.forEach(d => {
-        if (d.id.startsWith('new_')) {
-            cleanBatch.set(colRef.doc(d.id.replace('new_', '')), d.data());
-            cleanBatch.delete(d.ref);
-        } else {
-            cleanBatch.delete(d.ref);
-        }
+        if (d.id.startsWith('new_')) return; // se procesan en el siguiente bucle
+        if (!finalIds.has(d.id)) finalBatch.delete(d.ref); // chunk sobrante de un ciclo con más chunks
     });
-    if (!existingSnap.empty) await cleanBatch.commit();
+    existingSnap.forEach(d => {
+        if (!d.id.startsWith('new_')) return;
+        finalBatch.set(colRef.doc(d.id.replace('new_', '')), d.data()); // promover a su id definitivo
+        finalBatch.delete(d.ref);                                      // limpiar el temporal
+    });
+
+    await finalBatch.commit();
     console.info(`[Firebase][Chunk] ${subcollName} → ${totalChunks} chunk(s) escritos.`);
 }
 
