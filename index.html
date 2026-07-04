@@ -31,7 +31,18 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="firebase-config.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- FIX BUG-IDX-7 (CRÍTICO — offline): antes se cargaba XLSX desde
+         cdnjs.cloudflare.com. El service worker EXCLUYE deliberadamente los
+         CDNs externos de su caché (siempre pide versión fresca), así que si
+         la conexión caía antes de que este script cargara (o en una sesión
+         offline posterior), window.XLSX quedaba undefined y tanto importar
+         catálogo como exportar Inventario/Auditoría a Excel fallaban en
+         silencio — justo el escenario de "WiFi inestable en la barra".
+         libs/xlsx.full.min.js ya existía en el repo (misma versión 0.18.5)
+         pero nunca se usaba. Al ser same-origin, el SW SÍ lo cachea con su
+         estrategia normal (stale-while-revalidate) y queda disponible
+         offline tras la primera carga. -->
+    <script src="libs/xlsx.full.min.js"></script>
 </head>
 
 <body class="min-h-screen">

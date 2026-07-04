@@ -1,47 +1,18 @@
 // ============================================================
 // SERVICE WORKER — BarInventory
-// Versión: 1.2.0
+// Versión: 1.1.0
 // ============================================================
 
 // FIX Fase-2: Una sola constante como fuente de verdad para el nombre del caché.
 // Antes había CACHE_NAME='bar-inventory-v2' y CACHE_VERSION='v1.1.0' inconsistentes.
 // Si solo se cambiaba uno, el caché del usuario no se invalidaba correctamente.
-// FIX BUG-SW-1: CACHE_NAME y CACHE_VERSION unificados en una sola constante.
-const CACHE_NAME = 'bar-inventory-v1.2.0';
+const CACHE_NAME = 'bar-inventory-v1.1.0';
 
 // Archivos que se guardan para funcionar sin internet
-//
-// FIX BUG-SW-2 (offline en primer uso): antes solo se precacheaban './',
-// './index.html' y './manifest.json'. styles.css y todos los módulos de
-// js/*.js (además de firebase-config.js y la librería local de Excel)
-// dependían de que el usuario tuviera internet la PRIMERA vez que abría la
-// app para que el "cacheo oportunista" del fetch handler los guardara.
-// Si el primer uso ocurría con la barra sin WiFi, la app cargaba en blanco
-// o sin estilos/funciones. Ahora se precachean explícitamente en la
-// instalación, así el PWA queda 100% operativo offline desde el primer
-// arranque, sin depender de haber tenido conexión antes.
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
-  './manifest.json',
-  './styles.css',
-  './firebase-config.js',
-  './libs/xlsx.full.min.js',
-  './js/app.js',
-  './js/state.js',
-  './js/constants.js',
-  './js/storage.js',
-  './js/auth.js',
-  './js/auth-roles.js',
-  './js/sync.js',
-  './js/audit.js',
-  './js/products.js',
-  './js/actions.js',
-  './js/render.js',
-  './js/ui.js',
-  './js/ajustes.js',
-  './js/reportes.js',
-  './js/notificaciones.js'
+  './manifest.json'
 ];
 
 // ── Instalación ──────────────────────────────────────────────
@@ -51,19 +22,7 @@ self.addEventListener('install', event => {
     caches.open(CACHE_NAME)
       .then(cache => {
         console.log('[SW] Guardando archivos en caché');
-        // FIX BUG-SW-2: addAll() es todo-o-nada — si UN solo archivo de la
-        // lista falla (404, typo de ruta, etc.) toda la instalación fallaba
-        // y la app se quedaba SIN service worker (sin offline en absoluto).
-        // Se usa Promise.allSettled + cache.put por archivo para que un
-        // archivo faltante no tumbe el precache de todos los demás.
-        return Promise.allSettled(
-          ASSETS_TO_CACHE.map(url =>
-            fetch(url).then(resp => {
-              if (resp && resp.ok) return cache.put(url, resp);
-              console.warn('[SW] No se pudo precachear (respuesta no OK):', url);
-            }).catch(err => console.warn('[SW] No se pudo precachear:', url, err))
-          )
-        );
+        return cache.addAll(ASSETS_TO_CACHE);
       })
       .then(() => self.skipWaiting())
       .catch(err => console.warn('[SW] Error en caché:', err))
