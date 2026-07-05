@@ -125,8 +125,13 @@ function saveProduct() {
   const name  = _el('productName')?.value.trim();
   const unit  = _el('productUnit')?.value.trim();
   const group = _el('productGroup')?.value.trim();
-  const capV  = parseFloat(_el('productCapacidadMl')?.value) || null;
-  const pesoV = parseFloat(_el('productPesoLlenaOz')?.value) || null;
+  // FIX BUG-PROD-1 (ver también products.js updateProduct): `parseFloat(x) || null`
+  // convertía un 0 real en null porque 0 es falsy en JS. Usamos un parseo explícito
+  // que solo cae a null cuando el campo está vacío o no es un número válido.
+  const capRaw  = _el('productCapacidadMl')?.value;
+  const pesoRaw = _el('productPesoLlenaOz')?.value;
+  const capV  = (capRaw  === '' || isNaN(parseFloat(capRaw)))  ? null : parseFloat(capRaw);
+  const pesoV = (pesoRaw === '' || isNaN(parseFloat(pesoRaw))) ? null : parseFloat(pesoRaw);
   const idVal = _el('productId')?.value.trim();
 
   if (!name) { showNotification('⚠️ Ingresa un nombre'); return; }

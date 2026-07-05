@@ -143,12 +143,24 @@ export function updateProduct(id, updates) {
   if (updates.name  !== undefined) product.name  = String(updates.name).trim();
   if (updates.unit  !== undefined) product.unit  = String(updates.unit).trim();
   if (updates.group !== undefined) product.group = String(updates.group).trim();
-  if (updates.capacidadMl        !== undefined) product.capacidadMl        = parseFloat(updates.capacidadMl)        || null;
-  if (updates.pesoBotellaLlenaOz !== undefined) product.pesoBotellaLlenaOz = parseFloat(updates.pesoBotellaLlenaOz) || null;
+  // FIX BUG-PROD-1: antes se usaba `parseFloat(updates.capacidadMl) || null`, que
+  // convierte un 0 legítimo en null porque 0 es "falsy" en JS (0 || null === null).
+  // En este dominio capacidadMl=0 no tiene efecto observable (tieneConversion() y
+  // todos los cálculos ya exigen > 0), pero corregirlo evita que un futuro código
+  // que compare `=== 0` en vez de `> 0` se comporte de forma inesperada.
+  if (updates.capacidadMl        !== undefined) product.capacidadMl        = _parseOptionalNumber(updates.capacidadMl);
+  if (updates.pesoBotellaLlenaOz !== undefined) product.pesoBotellaLlenaOz = _parseOptionalNumber(updates.pesoBotellaLlenaOz);
   if (updates.stockByArea) product.stockByArea = { ...product.stockByArea, ...updates.stockByArea };
   saveToLocalStorage();
   showNotification(`✅ "${product.name}" actualizado`);
   return product;
+}
+
+// Convierte a número o null SIN perder un 0 real (a diferencia de `parseFloat(x) || null`).
+function _parseOptionalNumber(val) {
+  if (val === '' || val === null || val === undefined) return null;
+  const n = parseFloat(val);
+  return isNaN(n) ? null : n;
 }
 
 export function deleteProduct(id) {
