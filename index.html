@@ -377,9 +377,25 @@
                             Botellas Enteras
                             <span class="inv-modal-label__badge">unidades</span>
                         </label>
-                        <input <!-- FIX BUG-IDX-4: inputmode="numeric" garantiza teclado numérico en móvil -->
-                        type="number" id="inv_enteras" min="0" step="1" value="0" inputmode="numeric"
-                               oninput="if(parseFloat(this.value)<0||isNaN(parseFloat(this.value)))this.value=0;"
+                        <!-- FIX BUG-IDX-4: inputmode="numeric" garantiza teclado numérico en móvil.
+                             FIX BUG-INPUT-1 (crítico de UX de captura): la validación anterior
+                             ( oninput="if(parseFloat(this.value)<0||isNaN(parseFloat(this.value)))
+                             this.value=0;" ) se ejecutaba en CADA tecla. Problema: al borrar el campo
+                             para escribir un número nuevo, el valor pasaba por un estado intermedio
+                             vacío ("") — parseFloat("") es NaN, así que la validación forzaba
+                             this.value=0 ANTES de que el bartender pudiera teclear el siguiente
+                             dígito. Resultado: al corregir un conteo (borrar "24" para escribir "35"),
+                             el campo se auto-rellenaba con "0" a mitad de la escritura — el "flujo de
+                             captura bloqueado" en la pantalla de mayor uso de toda la app.
+                             CORRECCIÓN: oninput ya no toca el campo si está vacío (deja terminar de
+                             escribir); solo limpia una entrada claramente inválida o negativa.
+                             onblur normaliza a 0 si el campo queda vacío/inválido al salir, así nunca
+                             queda en un estado visualmente roto. saveInventarioModal() en actions.js
+                             ya hacía Math.max(0, parseFloat(...)||0) al guardar, así que esto queda
+                             además consistente con lo que realmente se guarda. -->
+                        <input type="number" id="inv_enteras" min="0" step="1" value="0" inputmode="numeric"
+                               oninput="if(this.value!==''&&(parseFloat(this.value)<0||isNaN(parseFloat(this.value))))this.value='';"
+                               onblur="if(this.value===''||isNaN(parseFloat(this.value))||parseFloat(this.value)<0)this.value=0;"
                                class="inv-modal-input-enteras">
                     </div>
 
