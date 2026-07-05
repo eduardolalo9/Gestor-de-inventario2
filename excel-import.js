@@ -1,4 +1,4 @@
-// constants.js — v2.3
+ // constants.js — v2.3
 // ══════════════════════════════════════════════════════════════
 // Configuración Global y Reglas de Negocio
 //
