@@ -1,27 +1,48 @@
-/**
- * firebase-credentials.example.js
- * ══════════════════════════════════════════════════════════════
- * PLANTILLA de credenciales — NO contiene datos reales.
- *
- * INSTRUCCIONES:
- *   1. Copia este archivo con el nombre: firebase-credentials.js
- *   2. Rellena los valores con los de tu proyecto Firebase:
- *      Firebase Console → Configuración del proyecto →
- *      Tus apps → SDK Config
- *   3. Agrega firebase-credentials.js a .gitignore
- *   4. NUNCA commitees firebase-credentials.js al repositorio
- *
- * .gitignore debe incluir:
- *   firebase-credentials.js
- * ══════════════════════════════════════════════════════════════
- */
+{
+  "indexes": [
 
-window.FIREBASE_CREDENTIALS = {
-  apiKey: "REEMPLAZA_TU_API_KEY",
-  authDomain: "REEMPLAZA_TU_PROYECTO.firebaseapp.com",
-  databaseURL: "https://REEMPLAZA_TU_PROYECTO-default-rtdb.firebaseio.com",
-  projectId: "REEMPLAZA_TU_PROYECTO",
-  storageBucket: "REEMPLAZA_TU_PROYECTO.firebasestorage.app",
-  messagingSenderId: "REEMPLAZA_TU_SENDER_ID",
-  appId: "REEMPLAZA_TU_APP_ID"
-};
+    {
+      "_comment": "notificaciones.js — .where('docId','==',…).orderBy('fecha','desc')",
+      "collectionGroup": "notificaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "docId", "order": "ASCENDING"  },
+        { "fieldPath": "fecha", "order": "DESCENDING" }
+      ]
+    },
+
+    {
+      "_comment": "notificaciones.js (BUG-C2 FIX) — .where('docId','==',…).where('usuarioId','in',[…]).orderBy('fecha','desc') — query de usuario con filtro server-side",
+      "collectionGroup": "notificaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "docId",     "order": "ASCENDING"  },
+        { "fieldPath": "usuarioId", "order": "ASCENDING"  },
+        { "fieldPath": "fecha",     "order": "DESCENDING" }
+      ]
+    },
+
+    {
+      "_comment": "ajustes.js — .where('docId','==',…).where('estado','==','pendiente').orderBy('fecha','desc')",
+      "collectionGroup": "ajustes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "docId",  "order": "ASCENDING"  },
+        { "fieldPath": "estado", "order": "ASCENDING"  },
+        { "fieldPath": "fecha",  "order": "DESCENDING" }
+      ]
+    },
+
+    {
+      "_comment": "reportes.js — .where('docId','==',…).orderBy('timestamp','desc').limit(20)",
+      "collectionGroup": "reportesPublicados",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "docId",     "order": "ASCENDING"  },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    }
+
+  ],
+  "fieldOverrides": []
+}
